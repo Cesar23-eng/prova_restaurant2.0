@@ -146,7 +146,6 @@ class ProvaRestaurant(QMainWindow):
         layout.setSpacing(20)
         self.right_panel.setLayout(layout)
 
-        # Encabezado
         self.current_order_header = QLabel("Pedido Actual")
         self.current_order_header.setFont(QFont("Arial", 18, QFont.Weight.Bold))
         self.current_order_header.setObjectName("orderHeader")
@@ -157,36 +156,28 @@ class ProvaRestaurant(QMainWindow):
         self.table_info.setObjectName("tableInfo")
         layout.addWidget(self.table_info)
 
-        # Selectores de menu + tipo de consumo
         self.setup_menu_selectors(layout)
-
-        # Busqueda rapida
         self.setup_quick_search(layout)
-
-        # Botones de accion
         self.setup_action_buttons(layout)
 
-        # Display del pedido
         self.order_display = QTextEdit()
         self.order_display.setObjectName("orderDisplay")
         self.order_display.setFont(QFont("Arial", 12))
         self.order_display.setReadOnly(True)
         layout.addWidget(self.order_display)
 
-        # Boton exportar
         self.export_btn = self.create_fancy_button("Exportar a Excel", "accent", self.save_to_excel)
         layout.addWidget(self.export_btn)
 
         self.main_layout.addWidget(self.right_panel)
 
     # ----------------------------------------------------------------
-    #  Selectores de menu  (req. 3: tipo de consumo)
+    #  Selectores de menu
     # ----------------------------------------------------------------
     def setup_menu_selectors(self, layout):
         form_layout = QGridLayout()
         form_layout.setSpacing(15)
 
-        # Categoria
         lbl_category = QLabel("Categoria:")
         lbl_category.setFont(QFont("Arial", 13))
         self.category_combo = QComboBox()
@@ -196,7 +187,6 @@ class ProvaRestaurant(QMainWindow):
         form_layout.addWidget(lbl_category, 0, 0)
         form_layout.addWidget(self.category_combo, 0, 1)
 
-        # Platillo
         lbl_dish = QLabel("Platillo:")
         lbl_dish.setFont(QFont("Arial", 13))
         self.dish_combo = QComboBox()
@@ -205,7 +195,6 @@ class ProvaRestaurant(QMainWindow):
         form_layout.addWidget(lbl_dish, 1, 0)
         form_layout.addWidget(self.dish_combo, 1, 1)
 
-        # Variante
         lbl_variant = QLabel("Variante:")
         lbl_variant.setFont(QFont("Arial", 13))
         self.variant_combo = QComboBox()
@@ -213,7 +202,6 @@ class ProvaRestaurant(QMainWindow):
         form_layout.addWidget(lbl_variant, 2, 0)
         form_layout.addWidget(self.variant_combo, 2, 1)
 
-        # --- req. 3: Tipo de Consumo ---
         lbl_order_type = QLabel("Tipo de Consumo:")
         lbl_order_type.setFont(QFont("Arial", 13))
         self.order_type_combo = QComboBox()
@@ -414,7 +402,7 @@ class ProvaRestaurant(QMainWindow):
         self.order_display.setPlainText(text)
 
     # ----------------------------------------------------------------
-    #  Pago  (req. 1, 2, 4)
+    #  Pago
     # ----------------------------------------------------------------
     def mark_as_paid(self):
         if not self.order_manager.current_table:
@@ -424,7 +412,6 @@ class ProvaRestaurant(QMainWindow):
             QMessageBox.warning(self, "Error", "El pedido esta vacio")
             return
 
-        # --- req. 2: si es 'Para llevar', pedir detalles de moto primero ---
         if self.order_manager.order_type == "Para llevar":
             delivery_dlg = DeliveryDialog(self)
             if delivery_dlg.exec() != QDialog.DialogCode.Accepted:
@@ -435,7 +422,6 @@ class ProvaRestaurant(QMainWindow):
                 delivery_dlg.get_moto_method(),
             )
 
-        # --- req. 1 + 4: dialogo de pago con mixto y cambio ---
         dialog = PaymentDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.order_manager.set_payment_status(
@@ -601,7 +587,7 @@ class ProvaRestaurant(QMainWindow):
         self.search_input.clear()
 
     # ----------------------------------------------------------------
-    #  Exportar a Excel  (req. 3 - dos hojas)
+    #  Exportar a Excel
     # ----------------------------------------------------------------
     def save_to_excel(self):
         try:
