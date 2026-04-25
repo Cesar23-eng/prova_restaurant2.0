@@ -125,14 +125,14 @@ class OrderManager:
         self.order_type = order_type
 
     # -----------------------------------------------
-    #  Pagos  (req. 1 y 4)
+    #  Pagos
     #  payment_details estructura:
     #  {
     #    'method':        'Efectivo' | 'QR' | 'Mixto',
-    #    'cash_amount':   float,   # monto pagado en efectivo
-    #    'qr_amount':     float,   # monto pagado en QR
-    #    'amount_paid':   float,   # total recibido
-    #    'change':        float,   # cambio devuelto
+    #    'cash_amount':   float,
+    #    'qr_amount':     float,
+    #    'amount_paid':   float,
+    #    'change':        float,
     #    'change_method': 'Efectivo' | 'QR' | '',
     #    'total':         float,
     #  }
@@ -169,7 +169,7 @@ class OrderManager:
         return self.payment_details.get(table_name)
 
     # -----------------------------------------------
-    #  Delivery  (req. 2)
+    #  Delivery
     #  delivery_details estructura por mesa:
     #  { 'moto_cost': float, 'moto_payment_method': 'Efectivo' | 'QR' }
     # -----------------------------------------------
@@ -184,9 +184,7 @@ class OrderManager:
         return self.delivery_details.get(table_name)
 
     # -----------------------------------------------
-    #  Excel  (req. 3)
-    #  Hoja "En el local"  -> pedidos de mesa
-    #  Hoja "Para llevar"  -> pedidos delivery
+    #  Excel
     # -----------------------------------------------
     def save_all_to_excel(self, filepath: str = "pedidos.xlsx"):
         """
@@ -200,7 +198,6 @@ class OrderManager:
 
         wb = Workbook()
 
-        # Hoja 1: En el local
         ws_local = wb.active
         ws_local.title = "En el local"
         headers_local = [
@@ -209,7 +206,6 @@ class OrderManager:
             "Cambio (Bs)", "Cambio dado en", "Pagado"
         ]
 
-        # Hoja 2: Para llevar
         ws_delivery = wb.create_sheet("Para llevar")
         headers_delivery = [
             "Mesa/Cliente", "Platillos", "Total (Bs)",
@@ -270,7 +266,6 @@ class OrderManager:
                     "Si" if paid_status[0] else "No",
                 ])
 
-        # Auto-ajustar anchos de columnas
         for ws in [ws_local, ws_delivery]:
             for col in ws.columns:
                 max_len = max((len(str(c.value or "")) for c in col), default=0)
