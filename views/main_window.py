@@ -3,9 +3,9 @@ import sys
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QListWidget, QComboBox, QTextEdit, QFrame, QDialog, QMessageBox
+    QLabel, QPushButton, QListWidget, QComboBox, QTextEdit, QFrame, QDialog, QMessageBox, QLineEdit, QCompleter,
 )
-from PyQt6.QtGui import QFont, QPixmap, QColor, QPalette
+from PyQt6.QtGui import QFont, QPixmap, QColor, QPalette, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt
 from models.menu import MenuData
 from models.order import OrderManager
@@ -21,6 +21,10 @@ class ProvaRestaurant(QMainWindow):
         self.menu_data = MenuData()
         self.order_manager = OrderManager()
         self.theme_manager = ThemeManager()
+
+        # 👉 índice para el buscador rápido
+        self.quick_index = {}
+        self._build_quick_index()
 
         self.setup_window()
         self.init_ui()
@@ -164,6 +168,9 @@ class ProvaRestaurant(QMainWindow):
 
         # Selectores de platillos
         self.setup_menu_selectors(layout)
+
+        # 👉 aquí insertas el buscador
+        self.setup_quick_search(layout)
 
         # Botones de acción
         self.setup_action_buttons(layout)
@@ -327,15 +334,6 @@ class ProvaRestaurant(QMainWindow):
             self.order_manager.set_current_table(new_name)
             self.table_info.setText(f"Mesa: {new_name}")
 
-        dialog = EditTableDialog(self.order_manager.current_table, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_name = dialog.get_new_name()
-            if new_name:
-                if self.order_manager.rename_table(self.order_manager.current_table, new_name):
-                    self.table_list.currentItem().setText(new_name)
-                    self.order_manager.set_current_table(new_name)
-                    self.table_info.setText(f"Mesa: {new_name}")
-
     def delete_table(self):
         if not self.order_manager.current_table:
             QMessageBox.warning(self, "Error", "Selecciona un pedido primero")
@@ -413,10 +411,30 @@ class ProvaRestaurant(QMainWindow):
             QMessageBox.warning(self, "Error", "El pedido está vacío")
             return
 
+        # Mostrar diálogo de pago con cálculo de cambio
         dialog = PaymentDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            method = dialog.get_payment_method()
-            self.order_manager.set_payment_status(self.order_manager.current_table, True, method)
+            # Registrar pago con todos los detalles
+            self.order_manager.set_payment_status(
+                self.order_manager.current_table,
+                paid=True,
+                method=dialog.get_payment_method(),
+                amount_paid=dialog.get_amount_paid(),
+                change=dialog.get_change()
+            )
+
+            # Mensaje de confirmación detallado
+            _, total = self.order_manager.get_order_summary(self.order_manager.current_table)
+            msg = f"✅ Pago registrado exitosamente\n\n"
+            msg += f"Mesa: {self.order_manager.current_table}\n"
+            msg += f"Total: Bs. {total:.2f}\n"
+            msg += f"Método: {dialog.get_payment_method()}\n"
+
+            if dialog.get_payment_method() == "Efectivo":
+                msg += f"Recibido: Bs. {dialog.get_amount_paid():.2f}\n"
+                msg += f"💰 Cambio: Bs. {dialog.get_change():.2f}"
+
+            QMessageBox.information(self, "Pago Confirmado", msg)
             self.update_order_display()
 
             # Actualizar color en la lista
@@ -480,6 +498,71 @@ class ProvaRestaurant(QMainWindow):
                 QMessageBox.information(self, "Éxito", "La comanda se ha enviado a imprimir")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al imprimir: {str(e)}")
+
+    def _build_quick_index(self):
+        """Crea el índice de búsqueda: 'Platillo (Variante) - BsX' -> (cat, dish, variant, price)"""
+        self.quick_index.clear()
+        menu = self.menu_data.get_menu_prices()
+        for category, dishes in menu.items():
+            for dish, variants in dishes.items():
+                for variant, price in variants.items():
+                    label = f"{dish} ({variant}) - Bs{price}"
+                    self.quick_index[label] = (category, dish, variant, float(price))
+
+    def setup_quick_search(self, parent_layout):
+        row = QHBoxLayout()
+
+        lbl = QLabel("Búsqueda rápida:")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Ej: taco, birria, horchata, queso...")
+
+        # Autocompletado (contiene, sin mayúsculas)
+        self.completer = QCompleter(list(self.quick_index.keys()))
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.search_input.setCompleter(self.completer)
+
+        self.search_add_btn = self.create_fancy_button("Agregar", "success", self.on_quick_add)
+        self.search_input.returnPressed.connect(self.on_quick_add)
+        self.completer.activated[str].connect(self.on_quick_choose)
+
+        row.addWidget(lbl)
+        row.addWidget(self.search_input, 1)
+        row.addWidget(self.search_add_btn)
+        parent_layout.addLayout(row)
+
+        # Atajo Ctrl+K
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=lambda: self.search_input.setFocus())
+
+    def on_quick_choose(self, text: str):
+        if text and text in self.quick_index:
+            self._add_from_quick_key(text)
+
+    def on_quick_add(self):
+        if not self.order_manager.current_table:
+            QMessageBox.warning(self, "Sin mesa", "Selecciona o crea un pedido primero.")
+            return
+        txt = (self.search_input.text() or "").strip()
+        if not txt:
+            return
+
+        if txt in self.quick_index:
+            self._add_from_quick_key(txt)
+            return
+
+        # primer candidato que contenga el texto
+        for k in self.quick_index.keys():
+            if txt.lower() in k.lower():
+                self._add_from_quick_key(k)
+                return
+
+        QMessageBox.information(self, "Sin resultados", f"No encontré «{txt}».")
+
+    def _add_from_quick_key(self, key: str):
+        category, dish, variant, price = self.quick_index[key]
+        self.order_manager.add_item_to_order(category, dish, variant, price)
+        self.update_order_display()
+        self.search_input.clear()
 
     def save_to_excel(self):
         try:
