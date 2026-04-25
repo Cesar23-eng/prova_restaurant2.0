@@ -45,6 +45,7 @@ class ProvaRestaurant(QMainWindow):
         self.setup_left_panel()
         self.setup_right_panel()
 
+
     def setup_left_panel(self):
         self.left_panel = QFrame()
         self.left_panel.setObjectName("leftPanel")
@@ -188,6 +189,45 @@ class ProvaRestaurant(QMainWindow):
 
         self.main_layout.addWidget(self.right_panel)
 
+        # Crear widgets para los pagos mixtos
+        self.split_payment_label = QLabel("Pago Mixto")
+        self.split_payment_label.setFont(QFont("Arial", 12))
+        self.cash_amount_input = QLineEdit()
+        self.cash_amount_input.setPlaceholderText("Monto en Efectivo")
+        self.qr_amount_input = QLineEdit()
+        self.qr_amount_input.setPlaceholderText("Monto en QR")
+
+        self.payment_type_combo = QComboBox()
+        self.payment_type_combo.addItems(["Efectivo", "QR", "Pago Mixto"])
+        self.payment_type_combo.currentIndexChanged.connect(self.toggle_split_payment)
+
+        # Añadir al layout de pagos
+        self.payment_layout.addWidget(self.payment_type_combo)
+        self.payment_layout.addWidget(self.split_payment_label)
+        self.payment_layout.addWidget(self.cash_amount_input)
+        self.payment_layout.addWidget(self.qr_amount_input)
+
+        self.change_method_label = QLabel("Cambio entregado en:")
+        self.change_method_combo = QComboBox()
+        self.change_method_combo.addItems(["Efectivo", "QR"])
+
+        self.payment_layout.addWidget(self.change_method_label)
+        self.payment_layout.addWidget(self.change_method_combo)
+
+    def toggle_split_payment(self, index):
+        if self.payment_type_combo.currentText() == "Pago Mixto":
+            self.split_payment_label.show()
+            self.cash_amount_input.show()
+            self.qr_amount_input.show()
+        else:
+            self.split_payment_label.hide()
+            self.cash_amount_input.hide()
+            self.qr_amount_input.hide()
+
+        self.split_payment_label.hide()
+        self.cash_amount_input.hide()
+        self.qr_amount_input.hide()
+
     def setup_menu_selectors(self, layout):
         form_layout = QGridLayout()
         form_layout.setSpacing(15)
@@ -232,6 +272,18 @@ class ProvaRestaurant(QMainWindow):
         layout.addLayout(form_layout)
         self.update_dishes()
         self.update_variants()
+
+    def toggle_delivery_fields(self, index):
+        if self.order_type_combo.currentText() == "Para Llevar":
+            self.moto_cost_label.show()
+            self.moto_cost_input.show()
+            self.moto_payment_method_label.show()
+            self.moto_payment_method_combo.show()
+        else:
+            self.moto_cost_label.hide()
+            self.moto_cost_input.hide()
+            self.moto_payment_method_label.hide()
+            self.moto_payment_method_combo.hide()
 
     def setup_action_buttons(self, layout):
         action_layout = QHBoxLayout()
