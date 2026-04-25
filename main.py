@@ -1,7 +1,6 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from views.main_window import ProvaRestaurant
-import sys
 import os
 
 def main():
