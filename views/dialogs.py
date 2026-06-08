@@ -2,7 +2,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QDialogButtonBox,
     QListWidget, QPushButton, QMessageBox, QComboBox, QRadioButton,
-    QButtonGroup, QGroupBox, QFormLayout
+    QButtonGroup, QGroupBox, QFormLayout, QSpinBox
 )
 from PyQt6.QtGui import QFont, QDoubleValidator
 from PyQt6.QtCore import Qt
@@ -103,13 +103,164 @@ class DeleteItemDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-#  DeliveryDialog  (req. 2) - Costo de moto y metodo de pago a la moto
+#  AperturaCajaDialog — Registro del fondo inicial de caja
+# ---------------------------------------------------------------------------
+class AperturaCajaDialog(QDialog):
+    """
+    Se muestra al iniciar la app. Registra el nombre del cajero/responsable
+    y el monto inicial de la caja.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._responsable = ""
+        self._monto_inicial = 0.0
+        self.setWindowTitle("Apertura de Caja")
+        self.setFixedSize(420, 280)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("🏦  Apertura de Caja")
+        title.setFont(QFont("Arial", 15, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Completa los datos para iniciar el turno")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.responsable_input = QLineEdit()
+        self.responsable_input.setPlaceholderText("Ej: Juan, Maria...")
+        self.responsable_input.setFont(QFont("Arial", 12))
+        form.addRow("Responsable de caja:", self.responsable_input)
+
+        self.monto_input = QLineEdit()
+        self.monto_input.setPlaceholderText("Ej: 200, 500...")
+        self.monto_input.setFont(QFont("Arial", 12))
+        validator = QDoubleValidator(0.00, 999999.99, 2)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.monto_input.setValidator(validator)
+        form.addRow("Fondo inicial (Bs):", self.monto_input)
+
+        layout.addLayout(form)
+
+        btn_abrir = QPushButton("Iniciar Turno")
+        btn_abrir.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        btn_abrir.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50; color: white;
+                padding: 10px; border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #45a049; }
+        """)
+        btn_abrir.clicked.connect(self._on_accept)
+        layout.addWidget(btn_abrir)
+
+        self.setLayout(layout)
+
+    def _on_accept(self):
+        responsable = self.responsable_input.text().strip()
+        if not responsable:
+            QMessageBox.warning(self, "Campo requerido", "Ingresa el nombre del responsable.")
+            return
+        monto_text = self.monto_input.text().strip()
+        if not monto_text:
+            QMessageBox.warning(self, "Campo requerido", "Ingresa el fondo inicial de caja.")
+            return
+        try:
+            self._monto_inicial = float(monto_text)
+        except ValueError:
+            QMessageBox.warning(self, "Valor invalido", "Ingresa un numero valido.")
+            return
+        self._responsable = responsable
+        self.accept()
+
+    def get_responsable(self) -> str:
+        return self._responsable
+
+    def get_monto_inicial(self) -> float:
+        return self._monto_inicial
+
+
+# ---------------------------------------------------------------------------
+#  AperturaCuentaDialog — Registro de apertura de una cuenta/mesa
+# ---------------------------------------------------------------------------
+class AperturaCuentaDialog(QDialog):
+    """
+    Dialogo que aparece al crear un nuevo pedido.
+    Permite registrar el numero de personas y observaciones.
+    """
+    def __init__(self, table_name: str, order_number: str, parent=None):
+        super().__init__(parent)
+        self._num_personas = 1
+        self._observaciones = ""
+        self.table_name = table_name
+        self.order_number = order_number
+        self.setWindowTitle("Apertura de Cuenta")
+        self.setFixedSize(400, 280)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel(f"📋  Apertura de Cuenta")
+        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        info = QLabel(f"Pedido {self.order_number}  —  {self.table_name}")
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info.setStyleSheet("color: #444; font-size: 12px; font-weight: bold;")
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.personas_spin = QSpinBox()
+        self.personas_spin.setMinimum(1)
+        self.personas_spin.setMaximum(50)
+        self.personas_spin.setValue(1)
+        self.personas_spin.setFont(QFont("Arial", 12))
+        form.addRow("Numero de personas:", self.personas_spin)
+
+        self.obs_input = QLineEdit()
+        self.obs_input.setPlaceholderText("Ej: cumpleanos, alergias, preferencias...")
+        self.obs_input.setFont(QFont("Arial", 11))
+        form.addRow("Observaciones (opcional):", self.obs_input)
+
+        layout.addLayout(form)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("Abrir Cuenta")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self.setLayout(layout)
+
+    def get_num_personas(self) -> int:
+        return self.personas_spin.value()
+
+    def get_observaciones(self) -> str:
+        return self.obs_input.text().strip()
+
+
+# ---------------------------------------------------------------------------
+#  DeliveryDialog
 # ---------------------------------------------------------------------------
 class DeliveryDialog(QDialog):
-    """
-    Dialogo que aparece cuando el tipo de pedido es 'Para llevar'.
-    Captura el costo de la moto y el metodo de pago (Efectivo / QR).
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self._moto_cost = 0.0
@@ -131,7 +282,6 @@ class DeliveryDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
 
-        # Costo moto
         self.moto_cost_input = QLineEdit()
         self.moto_cost_input.setPlaceholderText("Ej: 10, 15, 20...")
         validator = QDoubleValidator(0.00, 9999.99, 2)
@@ -139,7 +289,6 @@ class DeliveryDialog(QDialog):
         self.moto_cost_input.setValidator(validator)
         form.addRow("Costo de la moto (Bs):", self.moto_cost_input)
 
-        # Metodo pago moto
         self.moto_method_combo = QComboBox()
         self.moto_method_combo.addItems(["Efectivo", "QR"])
         form.addRow("Pago a la moto:", self.moto_method_combo)
@@ -175,17 +324,9 @@ class DeliveryDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-#  PaymentDialog  (req. 1, 4) - Pagos mixtos + metodo de cambio
+#  PaymentDialog
 # ---------------------------------------------------------------------------
 class PaymentDialog(QDialog):
-    """
-    Dialogo de pago con:
-    - Efectivo
-    - QR / Transferencia
-    - Pago Mixto (efectivo + QR)
-    - Registro del metodo de cambio (req. 4)
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._payment_method = ""
@@ -210,13 +351,11 @@ class PaymentDialog(QDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Total
         total_label = QLabel(f"<h2>Total a pagar: Bs. {self.total_amount:.2f}</h2>")
         total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_label.setStyleSheet("color: #2196F3; font-weight: bold;")
         layout.addWidget(total_label)
 
-        # --- Metodo de pago ---
         method_group = QGroupBox("Metodo de Pago")
         method_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         method_layout = QVBoxLayout()
@@ -234,7 +373,6 @@ class PaymentDialog(QDialog):
         method_group.setLayout(method_layout)
         layout.addWidget(method_group)
 
-        # --- Seccion efectivo puro ---
         self.cash_section = QGroupBox("Pago en Efectivo")
         self.cash_section.setStyleSheet("QGroupBox { font-weight: bold; color: #4CAF50; }")
         cash_layout = QVBoxLayout()
@@ -253,7 +391,6 @@ class PaymentDialog(QDialog):
         self.cash_section.setVisible(False)
         layout.addWidget(self.cash_section)
 
-        # --- Seccion QR puro (sin campos extra, solo confirmacion) ---
         self.qr_section = QGroupBox("QR / Transferencia")
         self.qr_section.setStyleSheet("QGroupBox { font-weight: bold; color: #2196F3; }")
         qr_layout = QVBoxLayout()
@@ -264,7 +401,6 @@ class PaymentDialog(QDialog):
         self.qr_section.setVisible(False)
         layout.addWidget(self.qr_section)
 
-        # --- Seccion pago mixto ---
         self.mixed_section = QGroupBox("Pago Mixto")
         self.mixed_section.setStyleSheet("QGroupBox { font-weight: bold; color: #FF9800; }")
         mixed_layout = QFormLayout()
@@ -290,7 +426,6 @@ class PaymentDialog(QDialog):
         self.mixed_section.setVisible(False)
         layout.addWidget(self.mixed_section)
 
-        # --- Cambio dado en (req. 4) ---
         self.change_method_group = QGroupBox("Cambio dado en")
         self.change_method_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         cm_layout = QHBoxLayout()
@@ -305,7 +440,6 @@ class PaymentDialog(QDialog):
         self.change_method_group.setVisible(False)
         layout.addWidget(self.change_method_group)
 
-        # --- Botones ---
         buttons_layout = QHBoxLayout()
 
         btn_calculate = QPushButton("Calcular")
@@ -326,7 +460,6 @@ class PaymentDialog(QDialog):
         layout.addLayout(buttons_layout)
         self.setLayout(layout)
 
-        # Senales
         self.radio_cash.toggled.connect(self._update_sections)
         self.radio_qr.toggled.connect(self._update_sections)
         self.radio_mixed.toggled.connect(self._update_sections)
@@ -334,9 +467,6 @@ class PaymentDialog(QDialog):
         self.mixed_cash_input.textChanged.connect(self._auto_calculate)
         self.mixed_qr_input.textChanged.connect(self._auto_calculate)
 
-    # ------------------------------------------------------------------
-    #  Helpers de estilo
-    # ------------------------------------------------------------------
     def _apply_input_style(self, widget, border_color):
         widget.setStyleSheet(f"""
             QLineEdit {{
@@ -383,9 +513,6 @@ class PaymentDialog(QDialog):
         except ValueError:
             return 0.0
 
-    # ------------------------------------------------------------------
-    #  Logica de visibilidad
-    # ------------------------------------------------------------------
     def _update_sections(self):
         is_cash = self.radio_cash.isChecked()
         is_qr = self.radio_qr.isChecked()
@@ -393,7 +520,6 @@ class PaymentDialog(QDialog):
         self.cash_section.setVisible(is_cash)
         self.qr_section.setVisible(is_qr)
         self.mixed_section.setVisible(is_mixed)
-        # Reset labels
         if not is_cash:
             self.cash_input.clear()
             self.change_label.setText("")
@@ -407,9 +533,6 @@ class PaymentDialog(QDialog):
         if self.radio_cash.isChecked() or self.radio_mixed.isChecked():
             self.calculate()
 
-    # ------------------------------------------------------------------
-    #  Calculo
-    # ------------------------------------------------------------------
     def calculate(self):
         if self.radio_cash.isChecked():
             self._calc_cash()
@@ -432,7 +555,7 @@ class PaymentDialog(QDialog):
         else:
             self.change_label.setText(f"CAMBIO: Bs. {diff:.2f}")
             self._style_change_label(self.change_label, ok=True)
-            self.change_method_group.setVisible(True)   # req. 4
+            self.change_method_group.setVisible(True)
 
     def _calc_mixed(self):
         cash = self._safe_float(self.mixed_cash_input.text())
@@ -454,11 +577,8 @@ class PaymentDialog(QDialog):
         else:
             self.mixed_status_label.setText(f"CAMBIO: Bs. {diff:.2f}")
             self._style_change_label(self.mixed_status_label, ok=True)
-            self.change_method_group.setVisible(True)   # req. 4
+            self.change_method_group.setVisible(True)
 
-    # ------------------------------------------------------------------
-    #  Confirmacion
-    # ------------------------------------------------------------------
     def confirm_payment(self):
         if not any([self.radio_cash.isChecked(),
                     self.radio_qr.isChecked(),
@@ -517,9 +637,6 @@ class PaymentDialog(QDialog):
             ) if self._change > 0 else ""
             self.accept()
 
-    # ------------------------------------------------------------------
-    #  Getters
-    # ------------------------------------------------------------------
     def get_payment_method(self) -> str:
         return self._payment_method
 
