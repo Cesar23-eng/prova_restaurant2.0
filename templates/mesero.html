@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PROVA - Mesero</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --primary: #1a5276;
+      --primary-light: #2980b9;
+      --accent: #e67e22;
+      --success: #27ae60;
+      --danger: #c0392b;
+      --text: #2c3e50;
+      --muted: #7f8c8d;
+      --border: #ddd;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+
+    /* HEADER */
+    header {
+      background: var(--primary);
+      color: white;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header span { font-size: 0.85rem; opacity: 0.8; }
+
+    /* STEPS */
+    .steps {
+      display: flex;
+      background: var(--primary);
+      padding: 0 20px 12px;
+      gap: 8px;
+    }
+    .step {
+      flex: 1;
+      text-align: center;
+      padding: 6px 4px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.6);
+      border: 1px solid rgba(255,255,255,0.2);
+      transition: all 0.2s;
+    }
+    .step.active {
+      background: white;
+      color: var(--primary);
+      font-weight: 700;
+    }
+    .step.done {
+      background: var(--success);
+      color: white;
+      border-color: var(--success);
+    }
+
+    /* SCREENS */
+    .screen { display: none; padding: 16px; }
+    .screen.active { display: block; }
+
+    /* CARDS */
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .card-header {
+      background: var(--primary);
+      color: white;
+      padding: 12px 16px;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .card-body { padding: 16px; }
+
+    /* MESA GRID */
+    .mesa-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .mesa-btn {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .mesa-btn:active { transform: scale(0.95); }
+    .mesa-btn.selected {
+      border-color: var(--primary);
+      background: #eaf2ff;
+      color: var(--primary);
+    }
+    .mesa-btn.pagado {
+      opacity: 0.45;
+      border-color: var(--success);
+      color: var(--success);
+    }
+    .mesa-icon { font-size: 1.6rem; display: block; margin-bottom: 4px; }
+
+    /* CATEGORIA TABS */
+    .cat-tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      scrollbar-width: none;
+    }
+    .cat-tabs::-webkit-scrollbar { display: none; }
+    .cat-tab {
+      white-space: nowrap;
+      padding: 8px 16px;
+      border-radius: 20px;
+      border: 2px solid var(--border);
+      background: var(--surface);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--muted);
+    }
+    .cat-tab.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    /* PLATILLOS */
+    .platillo-list { display: flex; flex-direction: column; gap: 10px; }
+    .platillo-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .platillo-card.selected { border-color: var(--primary); }
+    .platillo-name {
+      padding: 12px 16px 4px;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .variante-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 16px 12px;
+    }
+    .variante-btn {
+      padding: 6px 12px;
+      border-radius: 20px;
+      border: 2px solid var(--border);
+      background: var(--bg);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .variante-btn:active { transform: scale(0.95); }
+    .variante-btn.selected {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    .precio-tag {
+      font-size: 0.75rem;
+      opacity: 0.75;
+    }
+
+    /* CARRITO */
+    .carrito-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+    .carrito-item:last-child { border-bottom: none; }
+    .carrito-nombre { flex: 1; }
+    .carrito-precio { font-weight: 700; color: var(--primary); margin-right: 10px; }
+    .remove-btn {
+      background: var(--danger);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 26px;
+      height: 26px;
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.1rem;
+      font-weight: 700;
+      padding-top: 12px;
+      color: var(--primary);
+    }
+    .empty-carrito {
+      text-align: center;
+      color: var(--muted);
+      padding: 24px;
+      font-size: 0.9rem;
+    }
+
+    /* BUTTONS */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: opacity 0.15s, transform 0.1s;
+      margin-top: 12px;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-success { background: var(--success); color: white; }
+    .btn-outline {
+      background: transparent;
+      color: var(--primary);
+      border: 2px solid var(--primary);
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* TOAST */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #2c3e50;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 24px;
+      font-size: 0.9rem;
+      transition: transform 0.3s ease;
+      z-index: 999;
+      max-width: 90vw;
+      text-align: center;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.success { background: var(--success); }
+    #toast.error { background: var(--danger); }
+
+    /* FAB carrito */
+    #fab-carrito {
+      position: fixed;
+      bottom: 24px;
+      right: 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 50px;
+      padding: 14px 20px;
+      font-size: 1rem;
+      font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      z-index: 200;
+      transition: transform 0.15s;
+    }
+    #fab-carrito:active { transform: scale(0.95); }
+    #fab-carrito.visible { display: flex; }
+    #fab-badge {
+      background: white;
+      color: var(--accent);
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 900;
+    }
+
+    .mesa-seleccionada-tag {
+      background: #eaf2ff;
+      color: var(--primary);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🌮 PROVA</h1>
+    <span>Sistema de Pedidos</span>
+  </div>
+  <div id="header-mesa" style="font-weight:700;font-size:0.9rem;"></div>
+</header>
+
+<div class="steps">
+  <div class="step active" id="step1">1. Mesa</div>
+  <div class="step" id="step2">2. Platillos</div>
+  <div class="step" id="step3">3. Confirmar</div>
+</div>
+
+<!-- ============ PANTALLA 1: SELECCIONAR MESA ============ -->
+<div class="screen active" id="screen-mesa">
+  <div class="card">
+    <div class="card-header">Selecciona la mesa</div>
+    <div class="card-body">
+      <div class="mesa-grid" id="mesa-grid">
+        <p style="color:#999;font-size:0.9rem;">Cargando mesas...</p>
+      </div>
+      <button class="btn btn-primary" id="btn-ir-menu" disabled onclick="irAMenu()">Continuar →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PANTALLA 2: SELECCIONAR PLATILLOS ============ -->
+<div class="screen" id="screen-menu">
+  <div class="mesa-seleccionada-tag" id="tag-mesa">🍽️ Mesa: —</div>
+  <div class="cat-tabs" id="cat-tabs"></div>
+  <div style="height:12px;"></div>
+  <div class="platillo-list" id="platillo-list"></div>
+  <div style="height:80px;"></div>
+</div>
+
+<!-- ============ PANTALLA 3: CARRITO / CONFIRMAR ============ -->
+<div class="screen" id="screen-carrito">
+  <div class="card">
+    <div class="card-header">Resumen del pedido</div>
+    <div class="card-body" id="carrito-body">
+      <p class="empty-carrito">No hay platillos agregados.</p>
+    </div>
+  </div>
+  <button class="btn btn-outline" onclick="irAMenu()">← Agregar más platillos</button>
+  <button class="btn btn-success" id="btn-enviar" onclick="enviarPedido()">✅ Enviar pedido</button>
+</div>
+
+<!-- FAB carrito flotante -->
+<button id="fab-carrito" onclick="irACarrito()">
+  🛒 Ver pedido
+  <span id="fab-badge">0</span>
+</button>
+
+<!-- Toast de notificacion -->
+<div id="toast"></div>
+
+<script>
+  // ============ ESTADO ============
+  let menu = {};
+  let mesaSeleccionada = null;
+  let carrito = [];  // [{categoria, platillo, variante, precio}]
+  let categoriaActiva = null;
+
+  // ============ INIT ============
+  document.addEventListener('DOMContentLoaded', () => {
+    cargarMesas();
+    cargarMenu();
+  });
+
+  async function cargarMesas() {
+    try {
+      const res = await fetch('/api/mesas');
+      const mesas = await res.json();
+      const grid = document.getElementById('mesa-grid');
+      if (!mesas.length) {
+        grid.innerHTML = '<p style="color:#999;font-size:0.9rem;">No hay mesas activas.<br>Crea un pedido desde la PC primero.</p>';
+        return;
+      }
+      grid.innerHTML = '';
+      mesas.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'mesa-btn' + (m.pagado ? ' pagado' : '');
+        btn.innerHTML = `<span class="mesa-icon">${m.pagado ? '✅' : '🍽️'}</span>${m.nombre}${m.pagado ? '<br><small>Pagado</small>' : ''}`;
+        btn.disabled = m.pagado;
+        btn.onclick = () => seleccionarMesa(m.nombre, btn);
+        grid.appendChild(btn);
+      });
+    } catch(e) {
+      document.getElementById('mesa-grid').innerHTML = '<p style="color:red">Error conectando con la PC</p>';
+    }
+  }
+
+  async function cargarMenu() {
+    try {
+      const res = await fetch('/api/menu');
+      menu = await res.json();
+    } catch(e) {
+      console.error('Error cargando menu', e);
+    }
+  }
+
+  function seleccionarMesa(nombre, btn) {
+    document.querySelectorAll('.mesa-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    mesaSeleccionada = nombre;
+    document.getElementById('btn-ir-menu').disabled = false;
+    document.getElementById('header-mesa').textContent = '🍽️ ' + nombre;
+  }
+
+  // ============ NAVEGACION ============
+  function irAMenu() {
+    if (!mesaSeleccionada) return;
+    mostrarPantalla('screen-menu');
+    setStep(2);
+    document.getElementById('tag-mesa').textContent = '🍽️ Mesa: ' + mesaSeleccionada;
+    renderCategorias();
+    actualizarFab();
+  }
+
+  function irACarrito() {
+    mostrarPantalla('screen-carrito');
+    setStep(3);
+    renderCarrito();
+  }
+
+  function mostrarPantalla(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function setStep(n) {
+    [1,2,3].forEach(i => {
+      const el = document.getElementById('step' + i);
+      el.className = 'step' + (i < n ? ' done' : i === n ? ' active' : '');
+    });
+  }
+
+  // ============ MENU ============
+  function renderCategorias() {
+    const tabs = document.getElementById('cat-tabs');
+    tabs.innerHTML = '';
+    const categorias = Object.keys(menu);
+    if (!categorias.length) {
+      tabs.innerHTML = '<p style="color:#999">Menu no disponible</p>';
+      return;
+    }
+    categorias.forEach((cat, i) => {
+      const tab = document.createElement('button');
+      tab.className = 'cat-tab' + (i === 0 ? ' active' : '');
+      tab.textContent = cat;
+      tab.onclick = () => {
+        document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        categoriaActiva = cat;
+        renderPlatillos(cat);
+      };
+      tabs.appendChild(tab);
+    });
+    categoriaActiva = categorias[0];
+    renderPlatillos(categorias[0]);
+  }
+
+  function renderPlatillos(categoria) {
+    const lista = document.getElementById('platillo-list');
+    lista.innerHTML = '';
+    const platillos = menu[categoria] || {};
+    Object.entries(platillos).forEach(([nombre, variantes]) => {
+      const card = document.createElement('div');
+      card.className = 'platillo-card';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'platillo-name';
+      nameEl.textContent = nombre;
+      card.appendChild(nameEl);
+      const variantesEl = document.createElement('div');
+      variantesEl.className = 'variante-list';
+      Object.entries(variantes).forEach(([variante, precio]) => {
+        const btn = document.createElement('button');
+        btn.className = 'variante-btn';
+        btn.innerHTML = `${variante} <span class="precio-tag">Bs${precio}</span>`;
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          agregarAlCarrito(categoria, nombre, variante, precio, btn);
+        };
+        variantesEl.appendChild(btn);
+      });
+      card.appendChild(variantesEl);
+      lista.appendChild(card);
+    });
+  }
+
+  // ============ CARRITO ============
+  function agregarAlCarrito(categoria, platillo, variante, precio, btn) {
+    carrito.push({ categoria, platillo, variante, precio });
+    // Animacion rapida en el boton
+    btn.classList.add('selected');
+    setTimeout(() => btn.classList.remove('selected'), 400);
+    actualizarFab();
+    showToast(`${platillo} (${variante}) agregado`, 'success');
+  }
+
+  function actualizarFab() {
+    const fab = document.getElementById('fab-carrito');
+    const badge = document.getElementById('fab-badge');
+    badge.textContent = carrito.length;
+    fab.classList.toggle('visible', carrito.length > 0);
+  }
+
+  function renderCarrito() {
+    const body = document.getElementById('carrito-body');
+    if (!carrito.length) {
+      body.innerHTML = '<p class="empty-carrito">🛒 No hay platillos en el pedido.</p>';
+      document.getElementById('btn-enviar').disabled = true;
+      return;
+    }
+    document.getElementById('btn-enviar').disabled = false;
+    let total = 0;
+    body.innerHTML = '';
+    carrito.forEach((item, idx) => {
+      total += item.precio;
+      const row = document.createElement('div');
+      row.className = 'carrito-item';
+      row.innerHTML = `
+        <span class="carrito-nombre">${item.platillo}<br><small style="color:#999">${item.variante}</small></span>
+        <span class="carrito-precio">Bs${item.precio}</span>
+        <button class="remove-btn" onclick="quitarDelCarrito(${idx})">×</button>
+      `;
+      body.appendChild(row);
+    });
+    const totalRow = document.createElement('div');
+    totalRow.className = 'total-row';
+    totalRow.innerHTML = `<span>Total</span><span>Bs${total.toFixed(2)}</span>`;
+    body.appendChild(totalRow);
+  }
+
+  function quitarDelCarrito(idx) {
+    carrito.splice(idx, 1);
+    renderCarrito();
+    actualizarFab();
+  }
+
+  // ============ ENVIAR PEDIDO ============
+  async function enviarPedido() {
+    if (!carrito.length || !mesaSeleccionada) return;
+    const btn = document.getElementById('btn-enviar');
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+
+    let enviados = 0;
+    let errores = 0;
+
+    for (const item of carrito) {
+      try {
+        const res = await fetch('/api/agregar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mesa: mesaSeleccionada,
+            categoria: item.categoria,
+            platillo: item.platillo,
+            variante: item.variante,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) enviados++;
+        else errores++;
+      } catch(e) {
+        errores++;
+      }
+    }
+
+    if (errores === 0) {
+      showToast(`✅ ${enviados} platillo(s) enviado(s) a ${mesaSeleccionada}`, 'success');
+      carrito = [];
+      actualizarFab();
+      setTimeout(() => {
+        // Volver al inicio para un nuevo pedido
+        mesaSeleccionada = null;
+        document.getElementById('header-mesa').textContent = '';
+        mostrarPantalla('screen-mesa');
+        setStep(1);
+        cargarMesas();
+      }, 1800);
+    } else {
+      showToast(`⚠️ ${errores} item(s) no se pudieron enviar. Intenta de nuevo.`, 'error');
+      btn.disabled = false;
+      btn.textContent = '✅ Enviar pedido';
+    }
+  }
+
+  // ============ TOAST ============
+  function showToast(msg, tipo = '') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'show ' + tipo;
+    setTimeout(() => { t.className = ''; }, 2500);
+  }
+</script>
+</body>
+</html>
