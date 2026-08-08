@@ -12,7 +12,7 @@ from models.menu import MenuData
 from models.order import OrderManager
 from views.dialogs import (
     AddOrderDialog, EditTableDialog, DeleteItemDialog,
-    PaymentDialog, DeliveryDialog
+    PaymentDialog, DeliveryDialog,
 )
 from utils.styles import ThemeManager
 
@@ -45,7 +45,7 @@ class ProvaRestaurant(QMainWindow):
         self.setup_right_panel()
 
     # ----------------------------------------------------------------
-    #  Confirmacion al cerrar  (feature E)
+    #  Confirmacion al cerrar
     # ----------------------------------------------------------------
     def closeEvent(self, event):
         open_tables = [
@@ -61,7 +61,7 @@ class ProvaRestaurant(QMainWindow):
                 f"Hay {len(open_tables)} pedido(s) SIN pagar:\n{names}\n\n"
                 f"Los pedidos no pagados se perderan al cerrar.\n"
                 f"Los pedidos pagados ya fueron guardados en el Excel del dia.\n\n"
-                f"¿Deseas cerrar de todas formas?",
+                f"\u00bfDeseas cerrar de todas formas?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.No:
@@ -313,7 +313,6 @@ class ProvaRestaurant(QMainWindow):
             self.table_list.addItem(f"{num} - {result}")
 
     def select_table(self, item):
-        # El texto en la lista es '#0001 - Nombre', extraer solo el nombre
         text = item.text()
         if " - " in text:
             table_name = text.split(" - ", 1)[1]
@@ -324,7 +323,6 @@ class ProvaRestaurant(QMainWindow):
         self.update_order_display()
 
     def _find_list_item(self, table_name: str):
-        """Busca el item en la lista por nombre (ignorando el prefijo #XXXX)."""
         for i in range(self.table_list.count()):
             item = self.table_list.item(i)
             text = item.text()
@@ -337,7 +335,6 @@ class ProvaRestaurant(QMainWindow):
         if not self.order_manager.current_table:
             QMessageBox.warning(self, "Error", "Selecciona un pedido primero")
             return
-        # Bloqueo visual: no editar nombre si ya fue pagado
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             QMessageBox.warning(self, "Pedido pagado",
@@ -368,13 +365,12 @@ class ProvaRestaurant(QMainWindow):
         if not self.order_manager.current_table:
             QMessageBox.warning(self, "Error", "Selecciona un pedido primero")
             return
-        # Bloqueo visual: advertir si ya fue pagado
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             reply = QMessageBox.question(
                 self, "Pedido pagado",
                 f"El pedido '{self.order_manager.current_table}' ya fue PAGADO y guardado en Excel.\n"
-                f"¿Deseas eliminarlo de la lista de todas formas?",
+                f"\u00bfDeseas eliminarlo de la lista de todas formas?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.No:
@@ -400,7 +396,6 @@ class ProvaRestaurant(QMainWindow):
         if not self.order_manager.current_table:
             QMessageBox.warning(self, "Error", "Selecciona o crea un pedido primero")
             return
-        # Bloqueo visual: no agregar a pedido pagado
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             QMessageBox.warning(self, "Pedido pagado",
@@ -419,7 +414,6 @@ class ProvaRestaurant(QMainWindow):
         ):
             QMessageBox.warning(self, "Error", "No hay platillos para eliminar")
             return
-        # Bloqueo visual: no eliminar de pedido pagado
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             QMessageBox.warning(self, "Pedido pagado",
@@ -491,7 +485,6 @@ class ProvaRestaurant(QMainWindow):
         if not self.order_manager.table_orders.get(self.order_manager.current_table):
             QMessageBox.warning(self, "Error", "El pedido esta vacio")
             return
-        # Bloqueo: no pagar dos veces
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             QMessageBox.information(self, "Ya pagado",
@@ -588,6 +581,7 @@ class ProvaRestaurant(QMainWindow):
                         f"({delivery.get('moto_payment_method', '')})\n"
                     )
                 num = self.order_manager.get_order_number(self.order_manager.current_table)
+
                 comanda = (
                     f"           PROVA - Comida Mexicana\n"
                     f"           -------------------------\n\n"
@@ -654,7 +648,6 @@ class ProvaRestaurant(QMainWindow):
         if not self.order_manager.current_table:
             QMessageBox.warning(self, "Sin mesa", "Selecciona o crea un pedido primero.")
             return
-        # Bloqueo visual en busqueda rapida tambien
         paid, _ = self.order_manager.get_payment_status(self.order_manager.current_table)
         if paid:
             QMessageBox.warning(self, "Pedido pagado",

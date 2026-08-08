@@ -2,7 +2,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QDialogButtonBox,
     QListWidget, QPushButton, QMessageBox, QComboBox, QRadioButton,
-    QButtonGroup, QGroupBox, QFormLayout
+    QButtonGroup, QGroupBox, QFormLayout, QSpinBox
 )
 from PyQt6.QtGui import QFont, QDoubleValidator
 from PyQt6.QtCore import Qt
@@ -103,13 +103,9 @@ class DeleteItemDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-#  DeliveryDialog  (req. 2) - Costo de moto y metodo de pago a la moto
+#  DeliveryDialog
 # ---------------------------------------------------------------------------
 class DeliveryDialog(QDialog):
-    """
-    Dialogo que aparece cuando el tipo de pedido es 'Para llevar'.
-    Captura el costo de la moto y el metodo de pago (Efectivo / QR).
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self._moto_cost = 0.0
@@ -131,7 +127,6 @@ class DeliveryDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
 
-        # Costo moto
         self.moto_cost_input = QLineEdit()
         self.moto_cost_input.setPlaceholderText("Ej: 10, 15, 20...")
         validator = QDoubleValidator(0.00, 9999.99, 2)
@@ -139,7 +134,6 @@ class DeliveryDialog(QDialog):
         self.moto_cost_input.setValidator(validator)
         form.addRow("Costo de la moto (Bs):", self.moto_cost_input)
 
-        # Metodo pago moto
         self.moto_method_combo = QComboBox()
         self.moto_method_combo.addItems(["Efectivo", "QR"])
         form.addRow("Pago a la moto:", self.moto_method_combo)
@@ -175,17 +169,9 @@ class DeliveryDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-#  PaymentDialog  (req. 1, 4) - Pagos mixtos + metodo de cambio
+#  PaymentDialog
 # ---------------------------------------------------------------------------
 class PaymentDialog(QDialog):
-    """
-    Dialogo de pago con:
-    - Efectivo
-    - QR / Transferencia
-    - Pago Mixto (efectivo + QR)
-    - Registro del metodo de cambio (req. 4)
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._payment_method = ""
@@ -210,13 +196,11 @@ class PaymentDialog(QDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Total
         total_label = QLabel(f"<h2>Total a pagar: Bs. {self.total_amount:.2f}</h2>")
         total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_label.setStyleSheet("color: #2196F3; font-weight: bold;")
         layout.addWidget(total_label)
 
-        # --- Metodo de pago ---
         method_group = QGroupBox("Metodo de Pago")
         method_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         method_layout = QVBoxLayout()
@@ -234,7 +218,6 @@ class PaymentDialog(QDialog):
         method_group.setLayout(method_layout)
         layout.addWidget(method_group)
 
-        # --- Seccion efectivo puro ---
         self.cash_section = QGroupBox("Pago en Efectivo")
         self.cash_section.setStyleSheet("QGroupBox { font-weight: bold; color: #4CAF50; }")
         cash_layout = QVBoxLayout()
@@ -253,7 +236,6 @@ class PaymentDialog(QDialog):
         self.cash_section.setVisible(False)
         layout.addWidget(self.cash_section)
 
-        # --- Seccion QR puro (sin campos extra, solo confirmacion) ---
         self.qr_section = QGroupBox("QR / Transferencia")
         self.qr_section.setStyleSheet("QGroupBox { font-weight: bold; color: #2196F3; }")
         qr_layout = QVBoxLayout()
@@ -264,7 +246,6 @@ class PaymentDialog(QDialog):
         self.qr_section.setVisible(False)
         layout.addWidget(self.qr_section)
 
-        # --- Seccion pago mixto ---
         self.mixed_section = QGroupBox("Pago Mixto")
         self.mixed_section.setStyleSheet("QGroupBox { font-weight: bold; color: #FF9800; }")
         mixed_layout = QFormLayout()
@@ -290,7 +271,6 @@ class PaymentDialog(QDialog):
         self.mixed_section.setVisible(False)
         layout.addWidget(self.mixed_section)
 
-        # --- Cambio dado en (req. 4) ---
         self.change_method_group = QGroupBox("Cambio dado en")
         self.change_method_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         cm_layout = QHBoxLayout()
@@ -305,7 +285,6 @@ class PaymentDialog(QDialog):
         self.change_method_group.setVisible(False)
         layout.addWidget(self.change_method_group)
 
-        # --- Botones ---
         buttons_layout = QHBoxLayout()
 
         btn_calculate = QPushButton("Calcular")
@@ -326,7 +305,6 @@ class PaymentDialog(QDialog):
         layout.addLayout(buttons_layout)
         self.setLayout(layout)
 
-        # Senales
         self.radio_cash.toggled.connect(self._update_sections)
         self.radio_qr.toggled.connect(self._update_sections)
         self.radio_mixed.toggled.connect(self._update_sections)
@@ -334,9 +312,6 @@ class PaymentDialog(QDialog):
         self.mixed_cash_input.textChanged.connect(self._auto_calculate)
         self.mixed_qr_input.textChanged.connect(self._auto_calculate)
 
-    # ------------------------------------------------------------------
-    #  Helpers de estilo
-    # ------------------------------------------------------------------
     def _apply_input_style(self, widget, border_color):
         widget.setStyleSheet(f"""
             QLineEdit {{
@@ -383,9 +358,6 @@ class PaymentDialog(QDialog):
         except ValueError:
             return 0.0
 
-    # ------------------------------------------------------------------
-    #  Logica de visibilidad
-    # ------------------------------------------------------------------
     def _update_sections(self):
         is_cash = self.radio_cash.isChecked()
         is_qr = self.radio_qr.isChecked()
@@ -393,7 +365,6 @@ class PaymentDialog(QDialog):
         self.cash_section.setVisible(is_cash)
         self.qr_section.setVisible(is_qr)
         self.mixed_section.setVisible(is_mixed)
-        # Reset labels
         if not is_cash:
             self.cash_input.clear()
             self.change_label.setText("")
@@ -407,9 +378,6 @@ class PaymentDialog(QDialog):
         if self.radio_cash.isChecked() or self.radio_mixed.isChecked():
             self.calculate()
 
-    # ------------------------------------------------------------------
-    #  Calculo
-    # ------------------------------------------------------------------
     def calculate(self):
         if self.radio_cash.isChecked():
             self._calc_cash()
@@ -432,7 +400,7 @@ class PaymentDialog(QDialog):
         else:
             self.change_label.setText(f"CAMBIO: Bs. {diff:.2f}")
             self._style_change_label(self.change_label, ok=True)
-            self.change_method_group.setVisible(True)   # req. 4
+            self.change_method_group.setVisible(True)
 
     def _calc_mixed(self):
         cash = self._safe_float(self.mixed_cash_input.text())
@@ -454,11 +422,8 @@ class PaymentDialog(QDialog):
         else:
             self.mixed_status_label.setText(f"CAMBIO: Bs. {diff:.2f}")
             self._style_change_label(self.mixed_status_label, ok=True)
-            self.change_method_group.setVisible(True)   # req. 4
+            self.change_method_group.setVisible(True)
 
-    # ------------------------------------------------------------------
-    #  Confirmacion
-    # ------------------------------------------------------------------
     def confirm_payment(self):
         if not any([self.radio_cash.isChecked(),
                     self.radio_qr.isChecked(),
@@ -517,9 +482,6 @@ class PaymentDialog(QDialog):
             ) if self._change > 0 else ""
             self.accept()
 
-    # ------------------------------------------------------------------
-    #  Getters
-    # ------------------------------------------------------------------
     def get_payment_method(self) -> str:
         return self._payment_method
 
