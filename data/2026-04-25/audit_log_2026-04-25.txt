@@ -1,0 +1,2 @@
+[00:50:16] CREAR        | kk | numero=#0001
+[00:50:21] AGREGAR      | kk | Quesadilla (Carne) Bs35.0
