@@ -1,3 +1,3 @@
-from .styles import ThemeManager
+from .config import app_dir, data_root, load_config
 
-__all__ = ['ThemeManager']
+__all__ = ["app_dir", "data_root", "load_config"]
