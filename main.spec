@@ -1,16 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Compilar con:  pyinstaller main.spec
+# Junto a dist/main.exe deben quedar menu_precios.xlsx y prova.png (el dueño los edita).
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['openpyxl', 'openpyxl.styles', 'pandas._libs.tslibs.timedeltas', 'pandas._libs.tslibs.nattype', 'pandas._libs.tslibs.np_datetime', 'pandas._libs.skiplist'],
+    # La pantalla de meseros va dentro del ejecutable
+    datas=[('templates', 'templates')],
+    hiddenimports=['openpyxl', 'openpyxl.styles'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pandas', 'numpy', 'tkinter'],
     noarchive=False,
     optimize=0,
 )
