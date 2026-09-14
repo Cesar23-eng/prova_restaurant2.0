@@ -1,161 +1,301 @@
 # server.py
 """
-Mini servidor Flask para toma de pedidos desde celular.
-Corre en segundo plano junto a la app PyQt6.
+Servidor web para toma de pedidos desde el celular de los meseros.
+Corre en un hilo aparte junto a la app PyQt6 y comparte el mismo OrderManager.
+
+Todas las rutas /api/* piden el PIN de meseros (cabecera X-PIN) para que un
+cliente conectado al WiFi del local no pueda cargar pedidos.
 """
-import threading
+import hmac
+import os
 import socket
-from flask import Flask, jsonify, request, render_template
+import threading
+import time
+from collections import OrderedDict
 
-flask_app = Flask(__name__, template_folder="templates")
+from flask import Flask, jsonify, render_template, request
 
-# Referencia global al OrderManager (se inyecta desde main.py)
-_order_manager = None
-_menu_data = None
-_on_new_item_callback = None  # Callback para refrescar la UI de PyQt6
+from models.order import ORDER_TYPE_LOCAL, ORDER_TYPES
+from utils.config import resource_dir
+
+MAX_FAILED_PIN_ATTEMPTS = 10
+PIN_LOCKOUT_SECONDS = 60
+MAX_REMEMBERED_REQUESTS = 500
 
 
-def init_server(order_manager, menu_data, on_new_item_callback=None):
-    """Inyecta dependencias antes de arrancar el servidor."""
-    global _order_manager, _menu_data, _on_new_item_callback
-    _order_manager = order_manager
-    _menu_data = menu_data
-    _on_new_item_callback = on_new_item_callback
+def create_app(order_manager, menu_data, pin) -> Flask:
+    """`pin` puede ser un texto o una funcion que devuelve el PIN vigente."""
+    current_pin = pin if callable(pin) else (lambda: pin)
+    app = Flask(__name__, template_folder=os.path.join(resource_dir(), "templates"))
+    app.json.ensure_ascii = False
+    app.json.sort_keys = False
+
+    failed_attempts = {}  # ip -> (intentos, bloqueado_hasta)
+    processed_requests = OrderedDict()  # request_id -> respuesta ya enviada
+    requests_in_progress = set()
+    guard = threading.Lock()
+
+    def error(message: str, status: int):
+        return jsonify({"ok": False, "error": message}), status
+
+    @app.before_request
+    def require_pin():
+        if not request.path.startswith("/api/"):
+            return None
+        ip = request.remote_addr or "?"
+        now = time.monotonic()
+        with guard:
+            attempts, blocked_until = failed_attempts.get(ip, (0, 0.0))
+            if blocked_until > now:
+                return error("Demasiados intentos. Espera un minuto.", 429)
+        supplied = request.headers.get("X-PIN", "")
+        if hmac.compare_digest(supplied.encode(), str(current_pin()).encode()):
+            with guard:
+                failed_attempts.pop(ip, None)
+            return None
+        with guard:
+            attempts += 1
+            blocked = now + PIN_LOCKOUT_SECONDS if attempts >= MAX_FAILED_PIN_ATTEMPTS else 0.0
+            failed_attempts[ip] = (0 if blocked else attempts, blocked)
+        return error("PIN incorrecto", 401)
+
+    @app.after_request
+    def no_cache(response):
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.route("/")
+    def index():
+        return render_template("mesero.html")
+
+    @app.route("/api/ping")
+    def api_ping():
+        return jsonify({"ok": True})
+
+    @app.route("/api/menu")
+    def api_menu():
+        menu = menu_data.get_menu_prices()
+        if not menu:
+            return error(menu_data.last_error or "Menu no disponible", 503)
+        return jsonify(menu)
+
+    def table_payload(name: str):
+        order = order_manager.get_order(name)
+        if order is None:
+            return None
+        return {
+            "nombre": name,
+            "numero": order["number"],
+            "tipo": order["order_type"],
+            "pagado": order["paid"],
+            "items": len(order["items"]),
+            "total": round(sum(i["price"] for i in order["items"]), 2),
+        }
+
+    @app.route("/api/mesas", methods=["GET"])
+    def api_mesas():
+        tables = (table_payload(n) for n in order_manager.get_all_tables())
+        return jsonify([t for t in tables if t])
+
+    @app.route("/api/mesas", methods=["POST"])
+    def api_crear_mesa():
+        data = request.get_json(silent=True) or {}
+        nombre = (data.get("nombre") or "").strip()
+        tipo = data.get("tipo") or ORDER_TYPE_LOCAL
+        if not nombre:
+            return error("Escribe el nombre de la mesa o cliente", 400)
+        if tipo not in ORDER_TYPES:
+            return error("Tipo de consumo invalido", 400)
+        ok, result = order_manager.create_table(nombre, order_type=tipo, source="mesero")
+        if not ok:
+            return error(f"Ya existe una mesa con ese nombre. Prueba con '{result}'", 409)
+        return jsonify({"ok": True, "mesa": table_payload(result)}), 201
+
+    @app.route("/api/pedido/<path:mesa_nombre>")
+    def api_pedido(mesa_nombre):
+        name = order_manager.resolve_name(mesa_nombre.strip())
+        if name is None:
+            return error("Mesa no encontrada", 404)
+        order = order_manager.get_order(name)
+        if order is None:  # la caja la elimino justo ahora
+            return error("Mesa no encontrada", 404)
+        lines = order_manager.get_order_lines(name)
+        return jsonify({
+            "ok": True,
+            "mesa": name,
+            "numero": order["number"],
+            "tipo": order["order_type"],
+            "items": [
+                {
+                    "item": f"{l['dish']} ({l['variant']})",
+                    "platillo": l["dish"],
+                    "variante": l["variant"],
+                    "nota": l["note"],
+                    "cantidad": l["qty"],
+                    "subtotal": l["subtotal"],
+                }
+                for l in lines
+            ],
+            "total": round(sum(l["subtotal"] for l in lines), 2),
+            "pagado": order["paid"],
+            "metodo_pago": (order["payment"] or {}).get("method", ""),
+        })
+
+    def add_items_to_table(mesa: str, raw_items, request_id: str):
+        """
+        `request_id` lo genera el celular por cada envio. Si el WiFi se corta y el
+        mesero reintenta, el pedido no se duplica: se devuelve la respuesta original.
+        """
+        if not request_id:
+            return _add_items(mesa, raw_items)
+        with guard:
+            if request_id in processed_requests:
+                return jsonify(processed_requests[request_id])
+            if request_id in requests_in_progress:
+                return error("El pedido se esta procesando, intenta de nuevo", 409)
+            requests_in_progress.add(request_id)
+        try:
+            result = _add_items(mesa, raw_items)
+            if isinstance(result, dict):
+                with guard:
+                    processed_requests[request_id] = result
+                    while len(processed_requests) > MAX_REMEMBERED_REQUESTS:
+                        processed_requests.popitem(last=False)
+            return result
+        finally:
+            with guard:
+                requests_in_progress.discard(request_id)
+
+    def _add_items(mesa: str, raw_items):
+        name = order_manager.resolve_name(mesa)
+        if name is None:
+            return error(f"La mesa '{mesa}' no existe", 404)
+        if not isinstance(raw_items, list) or not raw_items:
+            return error("No hay platillos para enviar", 400)
+
+        # El precio siempre sale del menu del servidor, nunca del celular
+        menu = menu_data.get_menu_prices()
+        items = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                return error("Formato de pedido invalido", 400)
+            categoria = (raw.get("categoria") or "").strip()
+            platillo = (raw.get("platillo") or "").strip()
+            variante = (raw.get("variante") or "").strip()
+            price = menu.get(categoria, {}).get(platillo, {}).get(variante)
+            if price is None:
+                return error(f"'{platillo} ({variante})' ya no esta en el menu", 404)
+            items.append({
+                "category": categoria, "dish": platillo, "variant": variante,
+                "price": price, "note": raw.get("nota") or "",
+                "qty": raw.get("cantidad") or 1,
+            })
+
+        try:
+            count = order_manager.add_items(name, items, source="mesero")
+        except PermissionError:
+            return error("Este pedido ya fue pagado", 409)
+        except KeyError:
+            return error("La mesa ya no existe", 404)
+        except ValueError as e:
+            return error(str(e), 400)
+
+        return {
+            "ok": True,
+            "agregados": count,
+            "mensaje": f"{count} platillo(s) agregado(s) a {name}",
+        }
+
+    @app.route("/api/pedido/<path:mesa_nombre>/items", methods=["POST"])
+    def api_agregar_items(mesa_nombre):
+        data = request.get_json(silent=True) or {}
+        return add_items_to_table(mesa_nombre.strip(), data.get("items"),
+                                  str(data.get("request_id") or ""))
+
+    @app.route("/api/agregar", methods=["POST"])
+    def api_agregar():
+        """Compatibilidad: agrega un solo item. Body: {mesa, categoria, platillo, variante}"""
+        data = request.get_json(silent=True) or {}
+        mesa = (data.get("mesa") or "").strip()
+        if not mesa:
+            return error("Faltan datos", 400)
+        return add_items_to_table(mesa, [data], str(data.get("request_id") or ""))
+
+    return app
 
 
 def get_local_ip() -> str:
-    """Obtiene la IP local de la PC en la red WiFi."""
+    """IP de la PC en la red del local (para que los meseros entren desde el celular)."""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # No envia nada: solo pregunta al sistema que interfaz usaria
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+            if not ip.startswith("127."):
+                return ip
+    except OSError:
+        pass
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if not ip.startswith("127."):
+                return ip
+    except OSError:
+        pass
+    return "127.0.0.1"
 
 
-# -----------------------------------------------
-#  Rutas de la API
-# -----------------------------------------------
-
-@flask_app.route("/")
-def index():
-    """Pantalla principal del mesero."""
-    return render_template("mesero.html")
-
-
-@flask_app.route("/api/menu")
-def api_menu():
-    """Devuelve el menu completo en JSON."""
-    if _menu_data is None:
-        return jsonify({"error": "Menu no disponible"}), 503
-    menu = _menu_data.get_menu_prices()
-    return jsonify(menu)
-
-
-@flask_app.route("/api/mesas")
-def api_mesas():
-    """Devuelve la lista de mesas/pedidos activos."""
-    if _order_manager is None:
-        return jsonify([]), 503
-    mesas = []
-    for tabla in _order_manager.get_all_tables():
-        paid, _ = _order_manager.get_payment_status(tabla)
-        mesas.append({
-            "nombre": tabla,
-            "pagado": paid,
-        })
-    return jsonify(mesas)
-
-
-@flask_app.route("/api/agregar", methods=["POST"])
-def api_agregar():
+def _listen_exclusive(port: int) -> socket.socket:
     """
-    Agrega un item al pedido de una mesa.
-    Body JSON: { mesa, categoria, platillo, variante }
+    Abre el puerto en modo exclusivo. werkzeug usa SO_REUSEADDR, que en Windows
+    deja que otro programa (o una segunda copia de la app) escuche el mismo
+    puerto y los celulares terminen enviando pedidos a la instancia equivocada.
     """
-    if _order_manager is None:
-        return jsonify({"ok": False, "error": "Sistema no listo"}), 503
-
-    data = request.get_json(force=True)
-    mesa     = (data.get("mesa") or "").strip()
-    categoria = (data.get("categoria") or "").strip()
-    platillo  = (data.get("platillo") or "").strip()
-    variante  = (data.get("variante") or "").strip()
-
-    if not all([mesa, categoria, platillo, variante]):
-        return jsonify({"ok": False, "error": "Faltan datos"}), 400
-
-    if not _order_manager.name_exists(mesa):
-        return jsonify({"ok": False, "error": f"La mesa '{mesa}' no existe"}), 404
-
-    paid, _ = _order_manager.get_payment_status(mesa)
-    if paid:
-        return jsonify({"ok": False, "error": "Este pedido ya fue pagado"}), 400
-
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        menu = _menu_data.get_menu_prices()
-        price = menu[categoria][platillo][variante]
-    except (KeyError, TypeError):
-        return jsonify({"ok": False, "error": "Platillo no encontrado en el menu"}), 404
-
-    tabla_anterior = _order_manager.current_table
-    _order_manager.set_current_table(mesa)
-    try:
-        _order_manager.add_item_to_order(categoria, platillo, variante, price)
-    except PermissionError as e:
-        _order_manager.set_current_table(tabla_anterior)
-        return jsonify({"ok": False, "error": str(e)}), 403
-    _order_manager.set_current_table(tabla_anterior)
-
-    # Notificar a la UI de PyQt6 para que refresque el display
-    if _on_new_item_callback:
-        _on_new_item_callback(mesa)
-
-    return jsonify({"ok": True, "mensaje": f"'{platillo} ({variante})' agregado a {mesa}"})
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", port))
+        sock.listen(128)
+    except OSError:
+        sock.close()
+        raise
+    return sock
 
 
-@flask_app.route("/api/pedido/<mesa_nombre>")
-def api_pedido(mesa_nombre):
-    """Devuelve el resumen del pedido de una mesa."""
-    if _order_manager is None:
-        return jsonify({"error": "Sistema no listo"}), 503
+class WaiterServer:
+    """Levanta el servidor en un hilo daemon; si el puerto esta ocupado prueba los siguientes."""
 
-    mesa_nombre = mesa_nombre.strip()
-    if not _order_manager.name_exists(mesa_nombre):
-        return jsonify({"error": "Mesa no encontrada"}), 404
+    def __init__(self, app: Flask):
+        self.app = app
+        self.port = None
+        self._server = None
 
-    items = _order_manager.table_orders.get(mesa_nombre, [])
-    total = sum(i["price"] for i in items)
-    paid, method = _order_manager.get_payment_status(mesa_nombre)
+    def start(self, port: int = 5000, attempts: int = 10) -> int:
+        from werkzeug.serving import make_server
 
-    from collections import Counter
-    summary = Counter(f"{i['dish']} ({i['variant']})" for i in items)
-    detalle = [{"item": k, "cantidad": v} for k, v in summary.items()]
+        last_error = None
+        for candidate in range(port, port + attempts):
+            try:
+                sock = _listen_exclusive(candidate)
+                break
+            except OSError as e:
+                last_error = e
+        else:
+            raise OSError(f"No hay puertos libres entre {port} y {port + attempts - 1}: {last_error}")
+        try:
+            # Con fd, werkzeug usa el socket ya abierto y no llama a sys.exit si falla
+            self._server = make_server("0.0.0.0", candidate, self.app, threaded=True,
+                                       fd=sock.fileno())
+        finally:
+            sock.close()
+        self.port = candidate
+        threading.Thread(target=self._server.serve_forever, daemon=True,
+                         name="servidor-meseros").start()
+        return self.port
 
-    return jsonify({
-        "mesa": mesa_nombre,
-        "items": detalle,
-        "total": round(total, 2),
-        "pagado": paid,
-        "metodo_pago": method,
-    })
-
-
-# -----------------------------------------------
-#  Arranque en hilo separado
-# -----------------------------------------------
-
-def start_server(port: int = 5000):
-    """Arranca Flask en un hilo daemon (no bloquea la UI)."""
-    def run():
-        flask_app.run(
-            host="0.0.0.0",
-            port=port,
-            debug=False,
-            use_reloader=False,
-        )
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    return port
+    def stop(self):
+        if self._server is not None:
+            self._server.shutdown()
+            self._server = None

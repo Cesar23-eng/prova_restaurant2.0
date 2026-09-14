@@ -2,631 +2,686 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a5276" />
   <title>PROVA - Mesero</title>
   <style>
     :root {
       --bg: #f5f5f5;
       --surface: #ffffff;
       --primary: #1a5276;
-      --primary-light: #2980b9;
+      --primary-soft: #eaf2ff;
       --accent: #e67e22;
       --success: #27ae60;
       --danger: #c0392b;
       --text: #2c3e50;
       --muted: #7f8c8d;
-      --border: #ddd;
+      --border: #dddddd;
       --radius: 12px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100dvh;
+      -webkit-tap-highlight-color: transparent;
     }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    [hidden] { display: none !important; }
 
-    /* HEADER */
     header {
       background: var(--primary);
-      color: white;
-      padding: 16px 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      color: #fff;
+      padding: 14px 16px 10px;
       position: sticky;
       top: 0;
       z-index: 100;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }
-    header h1 { font-size: 1.3rem; font-weight: 700; }
-    header span { font-size: 0.85rem; opacity: 0.8; }
-
-    /* STEPS */
-    .steps {
-      display: flex;
-      background: var(--primary);
-      padding: 0 20px 12px;
-      gap: 8px;
-    }
+    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header small { font-size: 0.8rem; opacity: 0.8; }
+    #header-mesa { font-weight: 700; font-size: 0.9rem; text-align: right; }
+    .steps { display: flex; gap: 6px; margin-top: 10px; }
     .step {
-      flex: 1;
-      text-align: center;
-      padding: 6px 4px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      color: rgba(255,255,255,0.6);
-      border: 1px solid rgba(255,255,255,0.2);
-      transition: all 0.2s;
+      flex: 1; text-align: center; padding: 5px 4px; border-radius: 20px;
+      font-size: 0.72rem; color: rgba(255,255,255,0.65);
+      border: 1px solid rgba(255,255,255,0.25);
     }
-    .step.active {
-      background: white;
-      color: var(--primary);
-      font-weight: 700;
-    }
-    .step.done {
-      background: var(--success);
-      color: white;
-      border-color: var(--success);
+    .step.active { background: #fff; color: var(--primary); font-weight: 700; }
+    .step.done { background: var(--success); border-color: var(--success); color: #fff; }
+    #offline {
+      background: var(--danger); color: #fff; text-align: center;
+      font-size: 0.8rem; padding: 6px;
     }
 
-    /* SCREENS */
-    .screen { display: none; padding: 16px; }
-    .screen.active { display: block; }
-
-    /* CARDS */
+    main { padding: 14px 14px 110px; max-width: 720px; margin: 0 auto; }
     .card {
-      background: var(--surface);
-      border-radius: var(--radius);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-      margin-bottom: 12px;
-      overflow: hidden;
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 12px; overflow: hidden;
     }
     .card-header {
-      background: var(--primary);
-      color: white;
-      padding: 12px 16px;
-      font-weight: 600;
-      font-size: 0.95rem;
+      background: var(--primary); color: #fff; padding: 11px 14px;
+      font-weight: 600; font-size: 0.95rem;
+      display: flex; justify-content: space-between; align-items: center;
     }
-    .card-body { padding: 16px; }
+    .card-body { padding: 14px; }
+    .muted { color: var(--muted); font-size: 0.88rem; }
+    .center { text-align: center; }
 
-    /* MESA GRID */
-    .mesa-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-      gap: 10px;
+    .btn {
+      display: block; width: 100%; padding: 14px; border: none;
+      border-radius: var(--radius); font-size: 1rem; font-weight: 700;
+      text-align: center; margin-top: 10px; transition: transform 0.1s, opacity 0.15s;
     }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-outline { background: transparent; color: var(--primary); border: 2px solid var(--primary); }
+    .btn-small {
+      width: auto; display: inline-block; margin: 0; padding: 6px 12px;
+      font-size: 0.85rem; border-radius: 20px; background: rgba(255,255,255,0.2); color: #fff;
+    }
+
+    input[type=text], input[type=password], input[type=search], input[inputmode] {
+      width: 100%; padding: 12px; border: 2px solid var(--border);
+      border-radius: 10px; background: #fff; font-size: 1rem;
+    }
+    input:focus { outline: none; border-color: var(--primary); }
+
+    /* PIN */
+    .pin-input { font-size: 1.6rem !important; letter-spacing: 0.5em; text-align: center; }
+
+    /* MESAS */
+    .mesa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
     .mesa-btn {
-      background: var(--surface);
-      border: 2px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px 8px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.15s;
-      font-size: 0.9rem;
-      font-weight: 600;
-      color: var(--text);
+      background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius);
+      padding: 12px 8px; text-align: center; font-weight: 600; transition: transform 0.15s;
+      display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 104px;
     }
     .mesa-btn:active { transform: scale(0.95); }
-    .mesa-btn.selected {
-      border-color: var(--primary);
-      background: #eaf2ff;
-      color: var(--primary);
+    .mesa-btn.selected { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+    .mesa-btn:disabled { opacity: 0.45; border-color: var(--success); color: var(--success); }
+    .mesa-icon { font-size: 1.5rem; }
+    .mesa-num { font-size: 0.72rem; color: var(--muted); }
+    .mesa-name { font-size: 0.95rem; word-break: break-word; }
+    .mesa-meta { font-size: 0.75rem; color: var(--muted); font-weight: 500; }
+    .new-mesa-form { display: grid; gap: 10px; margin-top: 12px; }
+    .segmented { display: flex; gap: 8px; }
+    .segmented button {
+      flex: 1; padding: 10px; border-radius: 10px; border: 2px solid var(--border);
+      background: #fff; font-weight: 600; font-size: 0.9rem;
     }
-    .mesa-btn.pagado {
-      opacity: 0.45;
-      border-color: var(--success);
-      color: var(--success);
-    }
-    .mesa-icon { font-size: 1.6rem; display: block; margin-bottom: 4px; }
+    .segmented button.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
 
-    /* CATEGORIA TABS */
-    .cat-tabs {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 8px;
-      scrollbar-width: none;
+    /* MENU */
+    .sticky-tools {
+      position: sticky; top: var(--header-h, 104px); z-index: 50; background: var(--bg);
+      padding: 4px 0 8px; margin: -4px 0 4px;
     }
+    .cat-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0 2px; scrollbar-width: none; }
     .cat-tabs::-webkit-scrollbar { display: none; }
     .cat-tab {
-      white-space: nowrap;
-      padding: 8px 16px;
-      border-radius: 20px;
-      border: 2px solid var(--border);
-      background: var(--surface);
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-      color: var(--muted);
+      white-space: nowrap; padding: 8px 16px; border-radius: 20px; border: 2px solid var(--border);
+      background: var(--surface); font-size: 0.85rem; font-weight: 600; color: var(--muted);
     }
-    .cat-tab.active {
-      background: var(--primary);
-      color: white;
-      border-color: var(--primary);
-    }
-
-    /* PLATILLOS */
+    .cat-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .platillo-list { display: flex; flex-direction: column; gap: 10px; }
-    .platillo-card {
-      background: var(--surface);
-      border: 2px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      cursor: pointer;
-      transition: border-color 0.15s;
-    }
-    .platillo-card.selected { border-color: var(--primary); }
-    .platillo-name {
-      padding: 12px 16px 4px;
-      font-weight: 700;
-      font-size: 1rem;
-    }
-    .variante-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding: 8px 16px 12px;
-    }
+    .platillo-card { background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius); }
+    .platillo-name { padding: 11px 14px 2px; font-weight: 700; }
+    .platillo-cat { font-size: 0.72rem; color: var(--muted); font-weight: 500; margin-left: 6px; }
+    .variante-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 12px; }
     .variante-btn {
-      padding: 6px 12px;
-      border-radius: 20px;
-      border: 2px solid var(--border);
-      background: var(--bg);
-      font-size: 0.8rem;
-      cursor: pointer;
-      transition: all 0.15s;
-      display: flex;
-      align-items: center;
-      gap: 4px;
+      position: relative; padding: 8px 12px; border-radius: 20px; border: 2px solid var(--border);
+      background: var(--bg); font-size: 0.85rem; display: flex; align-items: center; gap: 6px;
+      transition: transform 0.1s;
     }
-    .variante-btn:active { transform: scale(0.95); }
-    .variante-btn.selected {
-      background: var(--primary);
-      color: white;
-      border-color: var(--primary);
-    }
-    .precio-tag {
-      font-size: 0.75rem;
-      opacity: 0.75;
+    .variante-btn:active { transform: scale(0.94); }
+    .variante-btn.flash { background: var(--success); color: #fff; border-color: var(--success); }
+    .precio-tag { font-size: 0.75rem; opacity: 0.75; }
+    .count-badge {
+      position: absolute; top: -8px; right: -6px; background: var(--accent); color: #fff;
+      border-radius: 10px; min-width: 20px; height: 20px; font-size: 0.72rem; font-weight: 800;
+      display: flex; align-items: center; justify-content: center; padding: 0 5px;
     }
 
     /* CARRITO */
-    .carrito-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.9rem;
+    .line { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .line:last-child { border-bottom: none; }
+    .line-top { display: flex; align-items: center; gap: 10px; }
+    .line-name { flex: 1; font-weight: 600; font-size: 0.95rem; }
+    .line-name small { display: block; color: var(--muted); font-weight: 400; }
+    .line-price { font-weight: 700; color: var(--primary); white-space: nowrap; }
+    .qty { display: flex; align-items: center; gap: 6px; }
+    .qty button {
+      width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--border);
+      background: #fff; font-size: 1.1rem; font-weight: 700; line-height: 1;
     }
-    .carrito-item:last-child { border-bottom: none; }
-    .carrito-nombre { flex: 1; }
-    .carrito-precio { font-weight: 700; color: var(--primary); margin-right: 10px; }
-    .remove-btn {
-      background: var(--danger);
-      color: white;
-      border: none;
-      border-radius: 50%;
-      width: 26px;
-      height: 26px;
-      font-size: 1rem;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
+    .qty span { min-width: 22px; text-align: center; font-weight: 700; }
+    .note-input { margin-top: 8px; padding: 8px 10px !important; font-size: 0.88rem !important; }
+    .note-tag { color: var(--accent); font-size: 0.82rem; font-style: italic; }
     .total-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 1.1rem;
-      font-weight: 700;
-      padding-top: 12px;
-      color: var(--primary);
-    }
-    .empty-carrito {
-      text-align: center;
-      color: var(--muted);
-      padding: 24px;
-      font-size: 0.9rem;
+      display: flex; justify-content: space-between; font-size: 1.1rem;
+      font-weight: 700; padding-top: 12px; color: var(--primary);
     }
 
-    /* BUTTONS */
-    .btn {
-      display: block;
-      width: 100%;
-      padding: 14px;
-      border: none;
-      border-radius: var(--radius);
-      font-size: 1rem;
-      font-weight: 700;
-      cursor: pointer;
-      text-align: center;
-      transition: opacity 0.15s, transform 0.1s;
-      margin-top: 12px;
+    /* FAB / TOAST */
+    #fab-carrito {
+      position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); right: 16px;
+      background: var(--accent); color: #fff; border: none; border-radius: 50px;
+      padding: 14px 20px; font-size: 1rem; font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25); display: flex; align-items: center; gap: 8px; z-index: 200;
     }
-    .btn:active { transform: scale(0.97); }
-    .btn-primary { background: var(--primary); color: white; }
-    .btn-success { background: var(--success); color: white; }
-    .btn-outline {
-      background: transparent;
-      color: var(--primary);
-      border: 2px solid var(--primary);
+    #fab-badge {
+      background: #fff; color: var(--accent); border-radius: 12px; min-width: 24px; height: 24px;
+      display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 900; padding: 0 6px;
     }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    /* TOAST */
     #toast {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: #2c3e50;
-      color: white;
-      padding: 12px 24px;
-      border-radius: 24px;
-      font-size: 0.9rem;
-      transition: transform 0.3s ease;
-      z-index: 999;
-      max-width: 90vw;
-      text-align: center;
+      position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(40px);
+      background: #2c3e50; color: #fff; padding: 12px 22px; border-radius: 24px; opacity: 0;
+      pointer-events: none; font-size: 0.9rem; transition: transform 0.3s ease, opacity 0.3s ease;
+      z-index: 999; max-width: 90vw; text-align: center;
     }
-    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
     #toast.success { background: var(--success); }
     #toast.error { background: var(--danger); }
-
-    /* FAB carrito */
-    #fab-carrito {
-      position: fixed;
-      bottom: 24px;
-      right: 20px;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 50px;
-      padding: 14px 20px;
-      font-size: 1rem;
-      font-weight: 700;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-      cursor: pointer;
-      display: none;
-      align-items: center;
-      gap: 8px;
-      z-index: 200;
-      transition: transform 0.15s;
-    }
-    #fab-carrito:active { transform: scale(0.95); }
-    #fab-carrito.visible { display: flex; }
-    #fab-badge {
-      background: white;
-      color: var(--accent);
-      border-radius: 50%;
-      width: 22px;
-      height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.8rem;
-      font-weight: 900;
-    }
-
-    .mesa-seleccionada-tag {
-      background: #eaf2ff;
-      color: var(--primary);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
   </style>
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>🌮 PROVA</h1>
-    <span>Sistema de Pedidos</span>
+  <div class="header-row">
+    <div>
+      <h1>🌮 PROVA</h1>
+      <small>Toma de pedidos</small>
+    </div>
+    <div id="header-mesa"></div>
   </div>
-  <div id="header-mesa" style="font-weight:700;font-size:0.9rem;"></div>
+  <div class="steps" id="steps">
+    <div class="step active" id="step1">1. Mesa</div>
+    <div class="step" id="step2">2. Platillos</div>
+    <div class="step" id="step3">3. Enviar</div>
+  </div>
 </header>
+<div id="offline" hidden>Sin conexión con la caja. Revisa el WiFi.</div>
 
-<div class="steps">
-  <div class="step active" id="step1">1. Mesa</div>
-  <div class="step" id="step2">2. Platillos</div>
-  <div class="step" id="step3">3. Confirmar</div>
-</div>
-
-<!-- ============ PANTALLA 1: SELECCIONAR MESA ============ -->
-<div class="screen active" id="screen-mesa">
-  <div class="card">
-    <div class="card-header">Selecciona la mesa</div>
-    <div class="card-body">
-      <div class="mesa-grid" id="mesa-grid">
-        <p style="color:#999;font-size:0.9rem;">Cargando mesas...</p>
+<main>
+  <!-- ============ PIN ============ -->
+  <section class="screen" id="screen-pin" hidden>
+    <div class="card">
+      <div class="card-header">Ingresa el PIN de meseros</div>
+      <div class="card-body">
+        <p class="muted" style="margin-bottom:12px">El PIN aparece en la barra inferior de la caja.</p>
+        <form id="pin-form">
+          <input id="pin-input" class="pin-input" type="password" inputmode="numeric"
+                 autocomplete="off" maxlength="8" placeholder="••••" />
+          <button class="btn btn-primary" type="submit">Entrar</button>
+        </form>
       </div>
-      <button class="btn btn-primary" id="btn-ir-menu" disabled onclick="irAMenu()">Continuar →</button>
     </div>
-  </div>
-</div>
+  </section>
 
-<!-- ============ PANTALLA 2: SELECCIONAR PLATILLOS ============ -->
-<div class="screen" id="screen-menu">
-  <div class="mesa-seleccionada-tag" id="tag-mesa">🍽️ Mesa: —</div>
-  <div class="cat-tabs" id="cat-tabs"></div>
-  <div style="height:12px;"></div>
-  <div class="platillo-list" id="platillo-list"></div>
-  <div style="height:80px;"></div>
-</div>
-
-<!-- ============ PANTALLA 3: CARRITO / CONFIRMAR ============ -->
-<div class="screen" id="screen-carrito">
-  <div class="card">
-    <div class="card-header">Resumen del pedido</div>
-    <div class="card-body" id="carrito-body">
-      <p class="empty-carrito">No hay platillos agregados.</p>
+  <!-- ============ MESAS ============ -->
+  <section class="screen" id="screen-mesa" hidden>
+    <div class="card">
+      <div class="card-header">
+        <span>Selecciona la mesa</span>
+        <button class="btn btn-small" id="btn-refresh" type="button">↻ Actualizar</button>
+      </div>
+      <div class="card-body">
+        <div class="mesa-grid" id="mesa-grid"><p class="muted">Cargando mesas...</p></div>
+        <button class="btn btn-outline" id="btn-new-mesa" type="button">＋ Nueva mesa / cliente</button>
+        <form class="new-mesa-form" id="new-mesa-form" hidden>
+          <input id="new-mesa-name" type="text" maxlength="40" placeholder="Ej: Mesa 5, Juan, Terraza 2" />
+          <div class="segmented" id="new-mesa-type">
+            <button type="button" class="active" data-tipo="En el local">🍽️ En el local</button>
+            <button type="button" data-tipo="Para llevar">🛵 Para llevar</button>
+          </div>
+          <button class="btn btn-primary" type="submit" style="margin-top:0">Crear y tomar pedido</button>
+        </form>
+      </div>
     </div>
-  </div>
-  <button class="btn btn-outline" onclick="irAMenu()">← Agregar más platillos</button>
-  <button class="btn btn-success" id="btn-enviar" onclick="enviarPedido()">✅ Enviar pedido</button>
-</div>
+  </section>
 
-<!-- FAB carrito flotante -->
-<button id="fab-carrito" onclick="irACarrito()">
-  🛒 Ver pedido
-  <span id="fab-badge">0</span>
-</button>
+  <!-- ============ MENU ============ -->
+  <section class="screen" id="screen-menu" hidden>
+    <div class="sticky-tools">
+      <input id="search" type="search" placeholder="🔍 Buscar: taco, horchata, birria..." autocomplete="off" />
+      <div class="cat-tabs" id="cat-tabs"></div>
+    </div>
+    <div class="platillo-list" id="platillo-list"></div>
+    <button class="btn btn-outline" type="button" data-go="screen-mesa">← Cambiar de mesa</button>
+  </section>
 
-<!-- Toast de notificacion -->
-<div id="toast"></div>
+  <!-- ============ CARRITO ============ -->
+  <section class="screen" id="screen-carrito" hidden>
+    <div class="card">
+      <div class="card-header"><span>Nuevo para enviar</span><span id="cart-count"></span></div>
+      <div class="card-body" id="carrito-body"></div>
+    </div>
+    <div class="card" id="current-order-card" hidden>
+      <div class="card-header"><span>Ya pedido en esta mesa</span><span id="current-order-total"></span></div>
+      <div class="card-body" id="current-order-body"></div>
+    </div>
+    <button class="btn btn-outline" type="button" data-go="screen-menu">← Agregar más platillos</button>
+    <button class="btn btn-success" id="btn-enviar" type="button">✅ Enviar a la caja</button>
+  </section>
+</main>
+
+<button id="fab-carrito" type="button" hidden>🛒 Ver pedido <span id="fab-badge">0</span></button>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
-  // ============ ESTADO ============
-  let menu = {};
-  let mesaSeleccionada = null;
-  let carrito = [];  // [{categoria, platillo, variante, precio}]
-  let categoriaActiva = null;
+  const STORAGE_KEY = 'prova-mesero-v2';
+  const REQUEST_TIMEOUT_MS = 10000;
+  const REFRESH_MS = 8000;
 
-  // ============ INIT ============
-  document.addEventListener('DOMContentLoaded', () => {
-    cargarMesas();
-    cargarMenu();
-  });
+  const state = {
+    pin: '',
+    menu: {},
+    mesas: [],
+    mesa: null,
+    cart: [],          // [{categoria, platillo, variante, precio, nota, cantidad}]
+    requestId: null,   // se reutiliza en reintentos para no duplicar el pedido
+    categoria: null,
+    newMesaTipo: 'En el local',
+    screen: 'screen-mesa',
+  };
 
-  async function cargarMesas() {
+  const $ = (id) => document.getElementById(id);
+
+  // Crea elementos sin innerHTML: los nombres vienen de la caja y del Excel
+  function h(tag, props = {}, ...children) {
+    const el = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (key === 'class') el.className = value;
+      else if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+      else if (key in el) el[key] = value;
+      else el.setAttribute(key, value);
+    }
+    for (const child of children.flat()) {
+      if (child === null || child === undefined || child === false) continue;
+      el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return el;
+  }
+
+  const money = (n) => 'Bs ' + Number(n).toFixed(2);
+
+  // ============ PERSISTENCIA LOCAL ============
+  function save() {
     try {
-      const res = await fetch('/api/mesas');
-      const mesas = await res.json();
-      const grid = document.getElementById('mesa-grid');
-      if (!mesas.length) {
-        grid.innerHTML = '<p style="color:#999;font-size:0.9rem;">No hay mesas activas.<br>Crea un pedido desde la PC primero.</p>';
-        return;
-      }
-      grid.innerHTML = '';
-      mesas.forEach(m => {
-        const btn = document.createElement('button');
-        btn.className = 'mesa-btn' + (m.pagado ? ' pagado' : '');
-        btn.innerHTML = `<span class="mesa-icon">${m.pagado ? '✅' : '🍽️'}</span>${m.nombre}${m.pagado ? '<br><small>Pagado</small>' : ''}`;
-        btn.disabled = m.pagado;
-        btn.onclick = () => seleccionarMesa(m.nombre, btn);
-        grid.appendChild(btn);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        pin: state.pin, mesa: state.mesa, cart: state.cart, requestId: state.requestId,
+      }));
+    } catch (e) { /* modo privado: se sigue sin guardar */ }
+  }
+
+  function load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      state.pin = saved.pin || '';
+      state.mesa = saved.mesa || null;
+      state.cart = Array.isArray(saved.cart) ? saved.cart : [];
+      state.requestId = saved.requestId || null;
+    } catch (e) { /* datos viejos o corruptos */ }
+  }
+
+  // ============ API ============
+  class ApiError extends Error {
+    constructor(message, status) { super(message); this.status = status; }
+  }
+
+  async function api(path, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(path, {
+        ...options,
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'X-PIN': state.pin, ...(options.headers || {}) },
       });
-    } catch(e) {
-      document.getElementById('mesa-grid').innerHTML = '<p style="color:red">Error conectando con la PC</p>';
+      setOffline(false);
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        state.pin = '';
+        save();
+        show('screen-pin');
+        throw new ApiError(data.error || 'PIN incorrecto', 401);
+      }
+      if (!res.ok || data.ok === false) throw new ApiError(data.error || 'Error ' + res.status, res.status);
+      return data;
+    } catch (e) {
+      if (!(e instanceof ApiError)) {
+        setOffline(true);
+        throw new ApiError('Sin conexión con la caja', 0);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  async function cargarMenu() {
-    try {
-      const res = await fetch('/api/menu');
-      menu = await res.json();
-    } catch(e) {
-      console.error('Error cargando menu', e);
-    }
-  }
-
-  function seleccionarMesa(nombre, btn) {
-    document.querySelectorAll('.mesa-btn').forEach(b => b.classList.remove('selected'));
-    btn.classList.add('selected');
-    mesaSeleccionada = nombre;
-    document.getElementById('btn-ir-menu').disabled = false;
-    document.getElementById('header-mesa').textContent = '🍽️ ' + nombre;
-  }
+  function setOffline(offline) { $('offline').hidden = !offline; }
 
   // ============ NAVEGACION ============
-  function irAMenu() {
-    if (!mesaSeleccionada) return;
-    mostrarPantalla('screen-menu');
-    setStep(2);
-    document.getElementById('tag-mesa').textContent = '🍽️ Mesa: ' + mesaSeleccionada;
-    renderCategorias();
-    actualizarFab();
+  function show(screen) {
+    if ((screen === 'screen-menu' || screen === 'screen-carrito') && !state.mesa) screen = 'screen-mesa';
+    if (screen !== 'screen-pin' && !state.pin) screen = 'screen-pin';
+    state.screen = screen;
+    document.querySelectorAll('.screen').forEach((s) => { s.hidden = s.id !== screen; });
+    const step = { 'screen-mesa': 1, 'screen-menu': 2, 'screen-carrito': 3 }[screen] || 0;
+    $('steps').hidden = step === 0;
+    [1, 2, 3].forEach((i) => { $('step' + i).className = 'step' + (i < step ? ' done' : i === step ? ' active' : ''); });
+    $('header-mesa').textContent = state.mesa ? '🍽️ ' + state.mesa : '';
+    updateFab();
+    if (screen === 'screen-mesa') loadMesas();
+    if (screen === 'screen-menu') renderMenu();
+    if (screen === 'screen-carrito') { renderCart(); loadCurrentOrder(); }
+    window.scrollTo(0, 0);
   }
 
-  function irACarrito() {
-    mostrarPantalla('screen-carrito');
-    setStep(3);
-    renderCarrito();
-  }
-
-  function mostrarPantalla(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-  }
-
-  function setStep(n) {
-    [1,2,3].forEach(i => {
-      const el = document.getElementById('step' + i);
-      el.className = 'step' + (i < n ? ' done' : i === n ? ' active' : '');
-    });
-  }
-
-  // ============ MENU ============
-  function renderCategorias() {
-    const tabs = document.getElementById('cat-tabs');
-    tabs.innerHTML = '';
-    const categorias = Object.keys(menu);
-    if (!categorias.length) {
-      tabs.innerHTML = '<p style="color:#999">Menu no disponible</p>';
-      return;
+  // ============ PIN ============
+  $('pin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    state.pin = $('pin-input').value.trim();
+    if (!state.pin) return;
+    try {
+      await api('/api/ping');
+      save();
+      $('pin-input').value = '';
+      await loadMenu();
+      show(state.mesa ? 'screen-menu' : 'screen-mesa');
+    } catch (err) {
+      toast(err.message, 'error');
     }
-    categorias.forEach((cat, i) => {
-      const tab = document.createElement('button');
-      tab.className = 'cat-tab' + (i === 0 ? ' active' : '');
-      tab.textContent = cat;
-      tab.onclick = () => {
-        document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        categoriaActiva = cat;
-        renderPlatillos(cat);
-      };
-      tabs.appendChild(tab);
-    });
-    categoriaActiva = categorias[0];
-    renderPlatillos(categorias[0]);
-  }
+  });
 
-  function renderPlatillos(categoria) {
-    const lista = document.getElementById('platillo-list');
-    lista.innerHTML = '';
-    const platillos = menu[categoria] || {};
-    Object.entries(platillos).forEach(([nombre, variantes]) => {
-      const card = document.createElement('div');
-      card.className = 'platillo-card';
-      const nameEl = document.createElement('div');
-      nameEl.className = 'platillo-name';
-      nameEl.textContent = nombre;
-      card.appendChild(nameEl);
-      const variantesEl = document.createElement('div');
-      variantesEl.className = 'variante-list';
-      Object.entries(variantes).forEach(([variante, precio]) => {
-        const btn = document.createElement('button');
-        btn.className = 'variante-btn';
-        btn.innerHTML = `${variante} <span class="precio-tag">Bs${precio}</span>`;
-        btn.onclick = (e) => {
-          e.stopPropagation();
-          agregarAlCarrito(categoria, nombre, variante, precio, btn);
-        };
-        variantesEl.appendChild(btn);
-      });
-      card.appendChild(variantesEl);
-      lista.appendChild(card);
-    });
-  }
-
-  // ============ CARRITO ============
-  function agregarAlCarrito(categoria, platillo, variante, precio, btn) {
-    carrito.push({ categoria, platillo, variante, precio });
-    // Animacion rapida en el boton
-    btn.classList.add('selected');
-    setTimeout(() => btn.classList.remove('selected'), 400);
-    actualizarFab();
-    showToast(`${platillo} (${variante}) agregado`, 'success');
-  }
-
-  function actualizarFab() {
-    const fab = document.getElementById('fab-carrito');
-    const badge = document.getElementById('fab-badge');
-    badge.textContent = carrito.length;
-    fab.classList.toggle('visible', carrito.length > 0);
-  }
-
-  function renderCarrito() {
-    const body = document.getElementById('carrito-body');
-    if (!carrito.length) {
-      body.innerHTML = '<p class="empty-carrito">🛒 No hay platillos en el pedido.</p>';
-      document.getElementById('btn-enviar').disabled = true;
-      return;
-    }
-    document.getElementById('btn-enviar').disabled = false;
-    let total = 0;
-    body.innerHTML = '';
-    carrito.forEach((item, idx) => {
-      total += item.precio;
-      const row = document.createElement('div');
-      row.className = 'carrito-item';
-      row.innerHTML = `
-        <span class="carrito-nombre">${item.platillo}<br><small style="color:#999">${item.variante}</small></span>
-        <span class="carrito-precio">Bs${item.precio}</span>
-        <button class="remove-btn" onclick="quitarDelCarrito(${idx})">×</button>
-      `;
-      body.appendChild(row);
-    });
-    const totalRow = document.createElement('div');
-    totalRow.className = 'total-row';
-    totalRow.innerHTML = `<span>Total</span><span>Bs${total.toFixed(2)}</span>`;
-    body.appendChild(totalRow);
-  }
-
-  function quitarDelCarrito(idx) {
-    carrito.splice(idx, 1);
-    renderCarrito();
-    actualizarFab();
-  }
-
-  // ============ ENVIAR PEDIDO ============
-  async function enviarPedido() {
-    if (!carrito.length || !mesaSeleccionada) return;
-    const btn = document.getElementById('btn-enviar');
-    btn.disabled = true;
-    btn.textContent = 'Enviando...';
-
-    let enviados = 0;
-    let errores = 0;
-
-    for (const item of carrito) {
-      try {
-        const res = await fetch('/api/agregar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mesa: mesaSeleccionada,
-            categoria: item.categoria,
-            platillo: item.platillo,
-            variante: item.variante,
-          }),
-        });
-        const data = await res.json();
-        if (data.ok) enviados++;
-        else errores++;
-      } catch(e) {
-        errores++;
+  // ============ MESAS ============
+  async function loadMesas() {
+    try {
+      state.mesas = await api('/api/mesas');
+      renderMesas();
+    } catch (e) {
+      if (e.status !== 401 && !state.mesas.length) {
+        $('mesa-grid').replaceChildren(h('p', { class: 'muted' }, e.message));
       }
     }
+  }
 
-    if (errores === 0) {
-      showToast(`✅ ${enviados} platillo(s) enviado(s) a ${mesaSeleccionada}`, 'success');
-      carrito = [];
-      actualizarFab();
-      setTimeout(() => {
-        // Volver al inicio para un nuevo pedido
-        mesaSeleccionada = null;
-        document.getElementById('header-mesa').textContent = '';
-        mostrarPantalla('screen-mesa');
-        setStep(1);
-        cargarMesas();
-      }, 1800);
-    } else {
-      showToast(`⚠️ ${errores} item(s) no se pudieron enviar. Intenta de nuevo.`, 'error');
-      btn.disabled = false;
-      btn.textContent = '✅ Enviar pedido';
+  function renderMesas() {
+    const grid = $('mesa-grid');
+    const open = state.mesas.filter((m) => !m.pagado);
+    if (!state.mesas.length) {
+      grid.replaceChildren(h('p', { class: 'muted' }, 'No hay mesas abiertas. Crea una con el botón de abajo.'));
+      return;
+    }
+    const cards = [...open, ...state.mesas.filter((m) => m.pagado)].map((m) => h('button', {
+      type: 'button',
+      class: 'mesa-btn' + (m.nombre === state.mesa ? ' selected' : ''),
+      disabled: m.pagado,
+      onclick: () => selectMesa(m.nombre),
+    },
+      h('span', { class: 'mesa-icon' }, m.pagado ? '✅' : m.tipo === 'Para llevar' ? '🛵' : '🍽️'),
+      h('span', { class: 'mesa-num' }, m.numero),
+      h('span', { class: 'mesa-name' }, m.nombre),
+      h('span', { class: 'mesa-meta' }, m.pagado ? 'Pagado' : `${m.items} ítems · ${money(m.total)}`),
+    ));
+    grid.replaceChildren(...cards);
+  }
+
+  function selectMesa(nombre) {
+    if (state.mesa !== nombre && state.cart.length) {
+      if (!confirm(`Tienes ${cartUnits()} platillo(s) sin enviar para ${state.mesa}. ¿Pasarlos a ${nombre}?`)) return;
+    }
+    state.mesa = nombre;
+    save();
+    show('screen-menu');
+  }
+
+  $('btn-refresh').addEventListener('click', loadMesas);
+  $('btn-new-mesa').addEventListener('click', () => {
+    $('new-mesa-form').hidden = false;
+    $('btn-new-mesa').hidden = true;
+    $('new-mesa-name').focus();
+  });
+  $('new-mesa-type').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tipo]');
+    if (!btn) return;
+    state.newMesaTipo = btn.dataset.tipo;
+    $('new-mesa-type').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+  });
+  $('new-mesa-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nombre = $('new-mesa-name').value.trim();
+    if (!nombre) return toast('Escribe el nombre de la mesa', 'error');
+    try {
+      const data = await api('/api/mesas', { method: 'POST', body: JSON.stringify({ nombre, tipo: state.newMesaTipo }) });
+      $('new-mesa-name').value = '';
+      $('new-mesa-form').hidden = true;
+      $('btn-new-mesa').hidden = false;
+      toast(`Mesa ${data.mesa.numero} creada`, 'success');
+      selectMesa(data.mesa.nombre);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  // ============ MENU ============
+  async function loadMenu() {
+    try {
+      state.menu = await api('/api/menu');
+    } catch (e) {
+      if (e.status !== 401) toast('No se pudo cargar el menú: ' + e.message, 'error');
     }
   }
 
-  // ============ TOAST ============
-  function showToast(msg, tipo = '') {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'show ' + tipo;
-    setTimeout(() => { t.className = ''; }, 2500);
+  function renderMenu() {
+    const categorias = Object.keys(state.menu);
+    if (!categorias.includes(state.categoria)) state.categoria = categorias[0] || null;
+    $('cat-tabs').replaceChildren(...categorias.map((cat) => h('button', {
+      type: 'button',
+      class: 'cat-tab' + (cat === state.categoria ? ' active' : ''),
+      onclick: () => { state.categoria = cat; $('search').value = ''; renderMenu(); },
+    }, cat)));
+    renderPlatillos();
   }
+
+  const normalize = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+  function renderPlatillos() {
+    const list = $('platillo-list');
+    const query = normalize($('search').value.trim());
+    const cards = [];
+    for (const [categoria, platillos] of Object.entries(state.menu)) {
+      if (!query && categoria !== state.categoria) continue;
+      for (const [platillo, variantes] of Object.entries(platillos)) {
+        const entries = Object.entries(variantes).filter(([variante]) =>
+          !query || normalize(`${platillo} ${variante}`).includes(query));
+        if (!entries.length) continue;
+        cards.push(h('div', { class: 'platillo-card' },
+          h('div', { class: 'platillo-name' }, platillo,
+            query ? h('span', { class: 'platillo-cat' }, categoria) : null),
+          h('div', { class: 'variante-list' }, entries.map(([variante, precio]) => {
+            const count = unitsFor(categoria, platillo, variante);
+            return h('button', {
+              type: 'button', class: 'variante-btn',
+              onclick: (e) => addToCart(categoria, platillo, variante, precio, e.currentTarget),
+            },
+              variante, h('span', { class: 'precio-tag' }, money(precio)),
+              count ? h('span', { class: 'count-badge' }, count) : null);
+          })),
+        ));
+      }
+    }
+    if (!cards.length) {
+      cards.push(h('p', { class: 'muted center' },
+        Object.keys(state.menu).length ? 'Sin resultados.' : 'Menú no disponible.'));
+    }
+    list.replaceChildren(...cards);
+  }
+
+  $('search').addEventListener('input', renderPlatillos);
+
+  // ============ CARRITO ============
+  const cartUnits = () => state.cart.reduce((n, l) => n + l.cantidad, 0);
+  const unitsFor = (categoria, platillo, variante) => state.cart
+    .filter((l) => l.categoria === categoria && l.platillo === platillo && l.variante === variante)
+    .reduce((n, l) => n + l.cantidad, 0);
+
+  function cartChanged() {
+    state.requestId = null;
+    save();
+    updateFab();
+  }
+
+  function addToCart(categoria, platillo, variante, precio, btn) {
+    const line = state.cart.find((l) => l.categoria === categoria && l.platillo === platillo
+      && l.variante === variante && !l.nota);
+    if (line) line.cantidad += 1;
+    else state.cart.push({ categoria, platillo, variante, precio, nota: '', cantidad: 1 });
+    cartChanged();
+    if (navigator.vibrate) navigator.vibrate(15);
+    btn.classList.add('flash');
+    setTimeout(renderPlatillos, 180);
+  }
+
+  function updateFab() {
+    const units = cartUnits();
+    $('fab-badge').textContent = units;
+    $('fab-carrito').hidden = !(units > 0 && state.screen === 'screen-menu');
+  }
+
+  function renderCart() {
+    const body = $('carrito-body');
+    const units = cartUnits();
+    $('cart-count').textContent = units ? `${units} ítem(s)` : '';
+    $('btn-enviar').disabled = !units;
+    if (!units) {
+      body.replaceChildren(h('p', { class: 'muted center' }, '🛒 Todavía no agregaste platillos.'));
+      return;
+    }
+    const total = state.cart.reduce((sum, l) => sum + l.precio * l.cantidad, 0);
+    body.replaceChildren(
+      ...state.cart.map((line, idx) => h('div', { class: 'line' },
+        h('div', { class: 'line-top' },
+          h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
+          h('div', { class: 'qty' },
+            h('button', { type: 'button', 'aria-label': 'Quitar uno', onclick: () => changeQty(idx, -1) }, '−'),
+            h('span', {}, line.cantidad),
+            h('button', { type: 'button', 'aria-label': 'Agregar uno', onclick: () => changeQty(idx, 1) }, '+'),
+          ),
+          h('div', { class: 'line-price' }, money(line.precio * line.cantidad)),
+        ),
+        h('input', {
+          type: 'text', class: 'note-input', maxLength: 120, value: line.nota,
+          placeholder: '📝 Nota para cocina (sin cebolla, bien cocido...)',
+          onchange: (e) => { line.nota = e.target.value.trim(); cartChanged(); },
+        }),
+      )),
+      h('div', { class: 'total-row' }, h('span', {}, 'Total a enviar'), h('span', {}, money(total))),
+    );
+  }
+
+  function changeQty(idx, delta) {
+    const line = state.cart[idx];
+    line.cantidad += delta;
+    if (line.cantidad <= 0) state.cart.splice(idx, 1);
+    cartChanged();
+    renderCart();
+  }
+
+  async function loadCurrentOrder() {
+    const card = $('current-order-card');
+    try {
+      const pedido = await api('/api/pedido/' + encodeURIComponent(state.mesa));
+      if (!pedido.items.length) { card.hidden = true; return; }
+      $('current-order-total').textContent = money(pedido.total);
+      $('current-order-body').replaceChildren(...pedido.items.map((item) => h('div', { class: 'line' },
+        h('div', { class: 'line-top' },
+          h('div', { class: 'line-name' }, `${item.cantidad}× ${item.platillo}`,
+            h('small', {}, item.variante),
+            item.nota ? h('span', { class: 'note-tag' }, '📝 ' + item.nota) : null),
+          h('div', { class: 'line-price' }, money(item.subtotal)),
+        ),
+      )));
+      card.hidden = false;
+      if (pedido.pagado) toast('Esta mesa ya fue cobrada. Elige otra.', 'error');
+    } catch (e) {
+      card.hidden = true;
+      if (e.status === 404) {
+        toast('La mesa ya no existe en la caja', 'error');
+        state.mesa = null;
+        save();
+        show('screen-mesa');
+      }
+    }
+  }
+
+  $('btn-enviar').addEventListener('click', async () => {
+    if (!state.cart.length || !state.mesa) return;
+    const btn = $('btn-enviar');
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    // Mismo id en cada reintento: si la caja ya lo recibio no se duplica
+    if (!state.requestId) {
+      state.requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      save();
+    }
+    try {
+      const data = await api('/api/pedido/' + encodeURIComponent(state.mesa) + '/items', {
+        method: 'POST',
+        body: JSON.stringify({ request_id: state.requestId, items: state.cart }),
+      });
+      toast('✅ ' + data.mensaje, 'success');
+      state.cart = [];
+      state.requestId = null;
+      const mesa = state.mesa;
+      state.mesa = null;
+      save();
+      setTimeout(() => { if (!state.mesa || state.mesa === mesa) show('screen-mesa'); }, 1200);
+    } catch (e) {
+      toast('⚠️ ' + e.message + (e.status === 0 ? '. Toca enviar de nuevo.' : ''), 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✅ Enviar a la caja';
+    }
+  });
+
+  document.querySelectorAll('[data-go]').forEach((btn) =>
+    btn.addEventListener('click', () => show(btn.dataset.go)));
+  $('fab-carrito').addEventListener('click', () => show('screen-carrito'));
+
+  // ============ TOAST ============
+  let toastTimer = null;
+  function toast(message, type = '') {
+    const t = $('toast');
+    t.textContent = message;
+    t.className = 'show ' + type;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.className = ''; }, 2800);
+  }
+
+  // ============ INIT ============
+  const syncHeaderHeight = () =>
+    document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
+  new ResizeObserver(syncHeaderHeight).observe(document.querySelector('header'));
+  load();
+  setInterval(() => {
+    if (state.screen === 'screen-mesa' && !document.hidden) loadMesas();
+  }, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.screen === 'screen-mesa') loadMesas();
+  });
+
+  (async () => {
+    if (!state.pin) return show('screen-pin');
+    await loadMenu();
+    if (state.pin) show(state.mesa ? (state.cart.length ? 'screen-carrito' : 'screen-menu') : 'screen-mesa');
+  })();
 </script>
 </body>
 </html>
