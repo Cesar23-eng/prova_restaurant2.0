@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# PyInstaller (archivos intermedios; se regeneran con `pyinstaller main.spec`)
+build/
+
+# Datos generados por la app en tiempo de ejecucion
+# (ventas, auditoria, pedidos abiertos, PIN de meseros)
+data/*/
+data/*.json
+data/*.log
+respaldo_*.xlsx
+dist/data/
+
+# IDE
+.idea/workspace.xml
+.idea/shelf/
+.vscode/
