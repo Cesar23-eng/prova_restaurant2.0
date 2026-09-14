@@ -1,56 +1,65 @@
-import sys
+import datetime
 import os
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer
-from views.main_window import ProvaRestaurant
+import sys
+import traceback
+
+from PyQt6.QtCore import QLockFile, QTimer
+from PyQt6.QtWidgets import QApplication, QMessageBox
+
+from utils.config import data_root, load_config
 
 
-def main():
+def install_error_handler():
+    """
+    PyQt6 cierra la aplicacion ante cualquier excepcion no capturada en un
+    slot. En plena atencion eso es inaceptable: se registra el error en
+    data/errores.log, se avisa al cajero y la app sigue abierta.
+    """
+    def handle(exc_type, exc, tb):
+        detail = "".join(traceback.format_exception(exc_type, exc, tb))
+        try:
+            with open(os.path.join(data_root(), "errores.log"), "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{detail}")
+        except OSError:
+            pass
+        if QApplication.instance() is not None:
+            QMessageBox.critical(
+                None, "Error inesperado",
+                f"Ocurrio un error, pero los pedidos siguen guardados.\n\n{exc}\n\n"
+                f"Detalle en data/errores.log",
+            )
+
+    sys.excepthook = handle
+
+
+def main() -> int:
+    install_error_handler()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setApplicationName("PROVA")
 
-    window = ProvaRestaurant()
+    # Dos copias abiertas pisarian los pedidos guardadas una de la otra
+    lock = QLockFile(os.path.join(data_root(), "prova.lock"))
+    if not lock.tryLock(200):
+        QMessageBox.warning(None, "PROVA", "PROVA ya esta abierto en esta computadora.")
+        return 1
+
+    from models.menu import MenuData
+    from models.order import OrderManager
+    from views.main_window import ProvaRestaurant
+
+    config = load_config()
+    order_manager = OrderManager(cutoff_hour=int(config.get("hora_corte_jornada", 4)))
+    window = ProvaRestaurant(order_manager, MenuData(), config)
     window.show()
 
-    # Arrancar Flask DESPUES de que la ventana ya esta lista y el cajero ingreso sus datos
-    # QTimer.singleShot ejecuta en el proximo ciclo del event loop (ventana ya visible)
-    def _start_flask():
-        try:
-            from server import init_server, start_server, get_local_ip
-            from models.menu import MenuData
+    # El servidor de meseros arranca cuando la ventana ya esta visible
+    QTimer.singleShot(300, window.start_waiter_server)
 
-            menu_data = MenuData()
-
-            def on_new_item(mesa_nombre: str):
-                try:
-                    if (
-                        window.order_manager.current_table == mesa_nombre
-                        and hasattr(window, "update_order_display")
-                    ):
-                        from PyQt6.QtCore import QMetaObject, Qt
-                        QMetaObject.invokeMethod(
-                            window,
-                            "update_order_display",
-                            Qt.ConnectionType.QueuedConnection,
-                        )
-                except Exception:
-                    pass
-
-            init_server(window.order_manager, menu_data, on_new_item)
-            port = start_server(port=5000)
-            ip = get_local_ip()
-
-            # Agregar la URL al titulo SIN borrar lo que puso apertura de caja
-            titulo_actual = window.windowTitle()
-            window.setWindowTitle(f"{titulo_actual}  |  Meseros: http://{ip}:{port}")
-
-        except Exception as e:
-            print(f"[PROVA] Servidor de meseros no disponible: {e}")
-
-    QTimer.singleShot(500, _start_flask)
-
-    sys.exit(app.exec())
+    code = app.exec()
+    lock.unlock()
+    return code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

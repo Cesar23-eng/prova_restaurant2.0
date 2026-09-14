@@ -1,33 +1,38 @@
-from PyQt6.QtGui import QColor
-
-
 class ThemeManager:
-    def __init__(self):
+    def __init__(self, theme: str = "light"):
         self.themes = {
             "dark": {
                 "primary": "#E63946",  # Rojo mexicano
                 "secondary": "#457B9D",  # Azul
                 "background": "#1D3557",  # Azul oscuro
-                "text": "#000000",  # Blanco crema
+                "text": "#F1FAEE",  # Blanco crema
+                "muted": "#A8B8C8",
                 "accent": "#A8DADC",  # Turquesa claro
+                "accent_text": "#1D3557",
                 "panel": "#2A3F5F",
+                "input": "#223A5E",
+                "note": "#F4A261",
                 "success": "#2A9D8F",
                 "warning": "#F4A261",
-                "danger": "#E76F51"
+                "danger": "#E76F51",
             },
             "light": {
                 "primary": "#D62828",
                 "secondary": "#F77F00",
                 "background": "#EAE2B7",
                 "text": "#003049",
+                "muted": "#5C6F7B",
                 "accent": "#FCBF49",
+                "accent_text": "#003049",
                 "panel": "#F8EDEB",
+                "input": "#FFFFFF",
+                "note": "#B34700",
                 "success": "#588157",
                 "warning": "#F4A261",
-                "danger": "#E63946"
-            }
+                "danger": "#E63946",
+            },
         }
-        self.current_theme = "light"
+        self.current_theme = theme if theme in self.themes else "light"
 
     def get_current_theme(self) -> dict:
         return self.themes[self.current_theme]
@@ -38,6 +43,14 @@ class ThemeManager:
     def get_stylesheet(self) -> str:
         theme = self.get_current_theme()
         return f"""
+            QMainWindow, QDialog {{
+                background-color: {theme['background']};
+            }}
+
+            QLabel {{
+                color: {theme['text']};
+            }}
+
             #leftPanel {{
                 background-color: {theme['panel']};
                 border-radius: 15px;
@@ -56,7 +69,7 @@ class ThemeManager:
 
             #appSubtitle {{
                 color: {theme['text']};
-                margin-bottom: 20px;
+                margin-bottom: 10px;
             }}
 
             #tableList {{
@@ -64,11 +77,11 @@ class ThemeManager:
                 color: {theme['text']};
                 border: 2px solid {theme['accent']};
                 border-radius: 10px;
-                padding: 10px;
+                padding: 6px;
             }}
 
             #tableList::item {{
-                padding: 10px;
+                padding: 8px;
                 border-bottom: 1px solid {theme['accent']};
             }}
 
@@ -91,17 +104,49 @@ class ThemeManager:
                 border-radius: 8px;
             }}
 
-            QComboBox {{
-                background-color: {theme['panel']};
+            #menuWarning {{
+                color: white;
+                background-color: {theme['danger']};
+                padding: 8px;
+                border-radius: 8px;
+            }}
+
+            QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QDateEdit {{
+                background-color: {theme['input']};
                 color: {theme['text']};
                 border: 1px solid {theme['accent']};
                 border-radius: 5px;
-                padding: 8px;
+                padding: 7px;
+            }}
+
+            QComboBox {{
                 min-width: 150px;
+            }}
+
+            QSpinBox::up-button, QSpinBox::down-button {{
+                width: 22px;
             }}
 
             QComboBox::drop-down {{
                 border: none;
+            }}
+
+            QComboBox QAbstractItemView {{
+                background-color: {theme['input']};
+                color: {theme['text']};
+                selection-background-color: {theme['primary']};
+                selection-color: white;
+            }}
+
+            QListWidget, QTextBrowser {{
+                background-color: {theme['panel']};
+                color: {theme['text']};
+                border: 1px solid {theme['accent']};
+                border-radius: 8px;
+            }}
+
+            QRadioButton, QCheckBox, QGroupBox {{
+                color: {theme['text']};
             }}
 
             #orderDisplay {{
@@ -109,7 +154,16 @@ class ThemeManager:
                 color: {theme['text']};
                 border: 2px solid {theme['accent']};
                 border-radius: 10px;
-                padding: 15px;
+                padding: 10px;
+            }}
+
+            QStatusBar {{
+                background-color: {theme['panel']};
+                color: {theme['text']};
+            }}
+
+            QStatusBar QLabel {{
+                padding: 2px 8px;
             }}
 
             /* Botones */
@@ -147,6 +201,7 @@ class ThemeManager:
 
             #successButton:hover {{
                 background-color: {theme['accent']};
+                color: {theme['accent_text']};
             }}
 
             #warningButton {{
@@ -167,9 +222,19 @@ class ThemeManager:
 
             #accentButton {{
                 background-color: {theme['accent']};
-                color: {theme['background']};
+                color: {theme['accent_text']};
                 border-radius: 8px;
                 padding: 10px 15px;
                 border: none;
+            }}
+
+            QPushButton:disabled {{
+                background-color: {theme['muted']};
+                color: {theme['panel']};
+            }}
+
+            QPushButton::menu-indicator {{
+                subcontrol-position: right center;
+                right: 8px;
             }}
         """
