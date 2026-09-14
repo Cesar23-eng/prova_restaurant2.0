@@ -11,12 +11,15 @@ from PyQt6.QtWidgets import (
 )
 
 from models.menu import MenuData
-from models.order import ORDER_TYPE_TAKEAWAY, ORDER_TYPES, OrderChangedError, OrderManager
+from models.order import (
+    MAX_PLATES, ORDER_TYPE_TAKEAWAY, ORDER_TYPES, OrderChangedError, OrderManager,
+    group_lines_by_plate, plate_label,
+)
 from utils.config import app_dir, load_config, save_config_value
 from utils.styles import ThemeManager
 from views.dialogs import (
     AddOrderDialog, DaySummaryDialog, DeleteItemDialog, DeliveryDialog, EditTableDialog,
-    PaymentDialog, money,
+    PaymentDialog, PlateDialog, money,
 )
 
 NO_TABLE_TEXT = "Seleccione una mesa o cree un nuevo pedido"
@@ -333,8 +336,19 @@ class ProvaRestaurant(QMainWindow):
 
         self.qty_spin = QSpinBox()
         self.qty_spin.setRange(1, 50)
+        # Plato al que va lo que se agrega: cocina arma cada plato por separado
+        self.plate_combo = QComboBox()
+        self.plate_combo.setMinimumWidth(130)
+        self.plate_combo.setToolTip("Plato donde cocina sirve lo que agregas.\n"
+                                    "Las bebidas y jugos siempre van sin plato.")
+        self._plate_combo_table = None
+        qty_plate = QHBoxLayout()
+        qty_plate.setSpacing(12)
+        qty_plate.addWidget(self.qty_spin, 1)
+        qty_plate.addWidget(label("Plato:"))
+        qty_plate.addWidget(self.plate_combo, 2)
         form_layout.addWidget(label("Cantidad:"), 1, 2)
-        form_layout.addWidget(self.qty_spin, 1, 3)
+        form_layout.addLayout(qty_plate, 1, 3)
 
         self.note_input = QLineEdit()
         self.note_input.setMaxLength(120)
@@ -361,6 +375,8 @@ class ProvaRestaurant(QMainWindow):
 
         self.add_item_btn    = self.create_fancy_button("Agregar",  "success",   self.add_order)
         self.remove_item_btn = self.create_fancy_button("Quitar",   "warning",   self.delete_platillo)
+        self.plates_btn      = self.create_fancy_button("Platos",   "accent",    self.organize_plates)
+        self.plates_btn.setToolTip("Repartir los platillos del pedido en platos para cocina")
         self.pay_btn         = self.create_fancy_button("Cobrar (F9)", "primary", self.mark_as_paid)
         self.print_btn       = self.create_fancy_button("Imprimir", "secondary", lambda: None)
 
@@ -373,6 +389,7 @@ class ProvaRestaurant(QMainWindow):
 
         action_layout.addWidget(self.add_item_btn)
         action_layout.addWidget(self.remove_item_btn)
+        action_layout.addWidget(self.plates_btn)
         action_layout.addWidget(self.pay_btn)
         action_layout.addWidget(self.print_btn)
         layout.addLayout(action_layout)
@@ -613,15 +630,55 @@ class ProvaRestaurant(QMainWindow):
         table = self._require_open_table("No se pueden agregar mas platillos.")
         if not table:
             return False
+        plate = self.plate_combo.currentData() or 0
+        qty = self.qty_spin.value()
         try:
             self.order_manager.add_item(table, category, dish, variant, price,
-                                        note=self.note_input.text(), qty=self.qty_spin.value())
+                                        note=self.note_input.text(), qty=qty, plate=plate)
         except (KeyError, ValueError, PermissionError) as e:
             QMessageBox.warning(self, "No se pudo agregar", str(e))
             return False
+        if plate and self.order_manager.plate_applies(category):
+            self.statusBar().showMessage(f"{qty}x {dish} ({variant}) al {plate_label(plate)}", 4000)
         self.qty_spin.setValue(1)
         self.note_input.clear()
         return True
+
+    # ----------------------------------------------------------------
+    #  Platos
+    # ----------------------------------------------------------------
+    def _refresh_plate_combo(self):
+        """
+        Opciones: Sin plato, los platos que ya usa el pedido y uno nuevo.
+        Al cambiar de mesa se elige el ultimo plato usado (o el Plato 1).
+        """
+        table = self.current_table
+        used = self.order_manager.used_plates(table) if table else []
+        if table != self._plate_combo_table:
+            self._plate_combo_table = table
+            selected = used[-1] if used else 1
+        else:
+            selected = self.plate_combo.currentData()
+            selected = 1 if selected is None else selected
+        top = min(max(used + [selected]) + 1, MAX_PLATES)
+        self.plate_combo.blockSignals(True)
+        self.plate_combo.clear()
+        self.plate_combo.addItem("Sin plato", 0)
+        for plate in range(1, top + 1):
+            suffix = "" if plate in used else "  (nuevo)"
+            self.plate_combo.addItem(f"{plate_label(plate)}{suffix}", plate)
+        self.plate_combo.setCurrentIndex(max(0, self.plate_combo.findData(selected)))
+        self.plate_combo.blockSignals(False)
+        self.plate_combo.setEnabled(bool(table) and not self.order_manager.is_paid(table))
+
+    def organize_plates(self):
+        table = self._require_open_table("No se pueden cambiar los platos.")
+        if not table:
+            return
+        if not self.order_manager.get_items(table):
+            QMessageBox.warning(self, "Pedido vacio", "Primero agrega platillos al pedido.")
+            return
+        PlateDialog(self.order_manager, table, self).exec()
 
     def add_order(self):
         category = self.category_combo.currentText()
@@ -655,6 +712,7 @@ class ProvaRestaurant(QMainWindow):
     def update_order_display(self):
         table = self.current_table
         order = self.order_manager.get_order(table) if table else None
+        self._refresh_plate_combo()
         if order is None:
             self.order_display.clear()
             self.table_info.setText(NO_TABLE_TEXT)
@@ -685,13 +743,25 @@ class ProvaRestaurant(QMainWindow):
         parts.append("<p style='margin:4px 0 8px 0'>" + " &nbsp;|&nbsp; ".join(info) + "</p>")
 
         if lines:
+            with_plates = any(line["plate"] for line in lines)
+            indent = "&nbsp;&nbsp;&nbsp;&nbsp;" if with_plates else ""
             parts.append("<table width='100%' cellspacing='0' cellpadding='4'>")
-            for line in lines:
-                name = f"{line['qty']} x {esc(line['dish'])} ({esc(line['variant'])})"
-                if line["note"]:
-                    name += f"<br/><i style='color:{theme['note']}'>&nbsp;&nbsp;Nota: {esc(line['note'])}</i>"
-                parts.append(f"<tr><td>{name}</td>"
-                             f"<td align='right' width='110'>{money(line['subtotal'])}</td></tr>")
+            for plate, plate_lines in group_lines_by_plate(lines):
+                if with_plates:
+                    title = plate_label(plate) if plate else "Sin plato (bebidas y para compartir)"
+                    subtotal = sum(l["subtotal"] for l in plate_lines)
+                    parts.append(
+                        f"<tr><td style='padding-top:8px'><b style='color:{theme['primary']}'>"
+                        f"\U0001F37D {esc(title)}</b></td>"
+                        f"<td align='right' style='padding-top:8px;color:{theme['muted']}'>"
+                        f"{money(subtotal)}</td></tr>")
+                for line in plate_lines:
+                    name = f"{indent}{line['qty']} x {esc(line['dish'])} ({esc(line['variant'])})"
+                    if line["note"]:
+                        name += (f"<br/>{indent}<i style='color:{theme['note']}'>"
+                                 f"&nbsp;&nbsp;Nota: {esc(line['note'])}</i>")
+                    parts.append(f"<tr><td>{name}</td>"
+                                 f"<td align='right' width='110'>{money(line['subtotal'])}</td></tr>")
             parts.append("</table>")
         else:
             parts.append("<p><i>Pedido vacio. Agrega platillos con el menu o la busqueda rapida.</i></p>")
@@ -818,18 +888,34 @@ class ProvaRestaurant(QMainWindow):
             lines = self.order_manager.get_order_lines(table)
             reprint_all = True
 
+        if self.print_html(self.kitchen_ticket_html(table, order, lines, reprint_all)):
+            self.order_manager.mark_sent_to_kitchen(table)
+
+    def kitchen_ticket_html(self, table: str, order: dict, lines: list, reprint_all: bool) -> str:
+        """Comanda agrupada por plato para que cocina sepa como servir cada uno."""
         esc = html.escape
         title = "COMANDA COCINA" + (" (REIMPRESION)" if reprint_all else "")
-        body = [self._ticket_header(table, order, title), "<table width='100%' cellpadding='2'>"]
-        for line in lines:
-            body.append(f"<tr><td valign='top' width='36'><b style='font-size:15px'>{line['qty']}x</b></td>"
-                        f"<td><b style='font-size:15px'>{esc(line['dish'])}</b> ({esc(line['variant'])})")
-            if line["note"]:
-                body.append(f"<br/><i>&gt;&gt; {esc(line['note'])}</i>")
-            body.append("</td></tr>")
-        body.append("</table><hr/>")
-        if self.print_html("".join(body)):
-            self.order_manager.mark_sent_to_kitchen(table)
+        # Platos que cocina ya recibio: lo nuevo se agrega a ese plato
+        sent_plates = {i.get("plate", 0) for i in order["items"] if i.get("kitchen_sent")}
+        with_plates = any(line["plate"] for line in lines)
+        body = [self._ticket_header(table, order, title)]
+        for plate, plate_lines in group_lines_by_plate(lines):
+            if with_plates:
+                heading = plate_label(plate).upper() if plate else "SIN PLATO / BEBIDAS"
+                if plate and plate in sent_plates and not reprint_all:
+                    heading += " (agregar)"
+                body.append(f"<p style='margin:8px 0 2px 0'><b style='font-size:17px'>"
+                            f"== {esc(heading)} ==</b></p>")
+            body.append("<table width='100%' cellpadding='2'>")
+            for line in plate_lines:
+                body.append(f"<tr><td valign='top' width='36'><b style='font-size:15px'>{line['qty']}x</b></td>"
+                            f"<td><b style='font-size:15px'>{esc(line['dish'])}</b> ({esc(line['variant'])})")
+                if line["note"]:
+                    body.append(f"<br/><i>&gt;&gt; {esc(line['note'])}</i>")
+                body.append("</td></tr>")
+            body.append("</table>")
+        body.append("<hr/>")
+        return "".join(body)
 
     def print_customer_bill(self):
         table = self._require_table("No hay nada para imprimir")
@@ -842,10 +928,17 @@ class ProvaRestaurant(QMainWindow):
             return
         esc = html.escape
         total = sum(l["subtotal"] for l in lines)
-        body = [self._ticket_header(table, order, "CUENTA"), "<table width='100%' cellpadding='2'>"]
+        # Al cliente no le importa el plato ni la nota: se suman las lineas iguales
+        bill_lines = {}
         for line in lines:
-            body.append(f"<tr><td>{line['qty']}x {esc(line['dish'])} ({esc(line['variant'])})</td>"
-                        f"<td align='right'>{line['subtotal']:.2f}</td></tr>")
+            key = (line["dish"], line["variant"], line["unit_price"])
+            entry = bill_lines.setdefault(key, [0, 0.0])
+            entry[0] += line["qty"]
+            entry[1] += line["subtotal"]
+        body = [self._ticket_header(table, order, "CUENTA"), "<table width='100%' cellpadding='2'>"]
+        for (dish, variant, _price), (qty, subtotal) in bill_lines.items():
+            body.append(f"<tr><td>{qty}x {esc(dish)} ({esc(variant)})</td>"
+                        f"<td align='right'>{subtotal:.2f}</td></tr>")
         body.append(f"</table><hr/><p align='right' style='font-size:15px'><b>TOTAL: {money(total)}</b></p>")
         delivery = order.get("delivery")
         if delivery and order["order_type"] == ORDER_TYPE_TAKEAWAY and delivery.get("moto_cost"):

@@ -15,7 +15,7 @@ from collections import OrderedDict
 
 from flask import Flask, jsonify, render_template, request
 
-from models.order import ORDER_TYPE_LOCAL, ORDER_TYPES
+from models.order import MAX_PLATES, ORDER_TYPE_LOCAL, ORDER_TYPES
 from utils.config import resource_dir
 
 MAX_FAILED_PIN_ATTEMPTS = 10
@@ -71,6 +71,13 @@ def create_app(order_manager, menu_data, pin) -> Flask:
     @app.route("/api/ping")
     def api_ping():
         return jsonify({"ok": True})
+
+    @app.route("/api/ajustes")
+    def api_ajustes():
+        return jsonify({
+            "categorias_sin_plato": order_manager.no_plate_categories,
+            "max_platos": MAX_PLATES,
+        })
 
     @app.route("/api/menu")
     def api_menu():
@@ -131,6 +138,7 @@ def create_app(order_manager, menu_data, pin) -> Flask:
                     "platillo": l["dish"],
                     "variante": l["variant"],
                     "nota": l["note"],
+                    "plato": l["plate"],
                     "cantidad": l["qty"],
                     "subtotal": l["subtotal"],
                 }
@@ -189,6 +197,7 @@ def create_app(order_manager, menu_data, pin) -> Flask:
                 "category": categoria, "dish": platillo, "variant": variante,
                 "price": price, "note": raw.get("nota") or "",
                 "qty": raw.get("cantidad") or 1,
+                "plate": raw.get("plato") or 0,
             })
 
         try:

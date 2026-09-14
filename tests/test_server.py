@@ -52,7 +52,7 @@ def test_waiter_creates_table_and_sends_batch(client, manager):
     detail = api(client, "get", "/api/pedido/mesa 7").get_json()
     assert detail["items"][0] == {
         "item": "Taco (Carne)", "platillo": "Taco", "variante": "Carne",
-        "nota": "sin cebolla", "cantidad": 2, "subtotal": 30.0,
+        "nota": "sin cebolla", "plato": 0, "cantidad": 2, "subtotal": 30.0,
     }
 
 
@@ -104,3 +104,26 @@ def test_server_falls_back_to_next_free_port(manager, menu_file):
     finally:
         first.stop()
         second.stop()
+
+
+def test_waiter_assigns_plates(client, manager):
+    manager.create_table("Mesa 1")
+    ajustes = api(client, "get", "/api/ajustes").get_json()
+    assert ajustes["categorias_sin_plato"] == ["Bebidas", "Jugos"]
+    res = api(client, "post", "/api/pedido/Mesa 1/items", json={"items": [
+        taco(cantidad=3, plato=1),
+        {"categoria": "Platillos", "platillo": "Taco", "variante": "Pastor", "cantidad": 2, "plato": 2},
+        {"categoria": "Bebidas", "platillo": "Coca cola", "variante": "Botella", "plato": 2},
+    ]})
+    assert res.get_json()["agregados"] == 6
+    items = api(client, "get", "/api/pedido/Mesa 1").get_json()["items"]
+    assert [(i["variante"], i["cantidad"], i["plato"]) for i in items] == [
+        ("Carne", 3, 1), ("Pastor", 2, 2), ("Botella", 1, 0),
+    ]
+
+
+def test_invalid_plate_from_waiter_adds_nothing(client, manager):
+    manager.create_table("Mesa 1")
+    res = api(client, "post", "/api/pedido/Mesa 1/items", json={"items": [taco(), taco(plato=500)]})
+    assert res.status_code == 400
+    assert manager.get_items("Mesa 1") == []

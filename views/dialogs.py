@@ -5,12 +5,12 @@ import html
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QDoubleValidator, QFont
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout,
+    QButtonGroup, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QListWidgetItem,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
     QPushButton, QRadioButton, QSpinBox, QTextBrowser, QVBoxLayout,
 )
 
-from models.order import ORDER_TYPES
+from models.order import MAX_PLATES, ORDER_TYPES, group_lines_by_plate, plate_label
 
 
 def money(value: float) -> str:
@@ -118,6 +118,8 @@ class DeleteItemDialog(QDialog):
         self.list_widget.setFont(QFont("Arial", 11))
         for line in self.lines:
             text = f"{line['qty']}x {line['dish']} ({line['variant']}) - {money(line['subtotal'])}"
+            if line.get("plate"):
+                text = f"[{plate_label(line['plate'])}]  {text}"
             if line["note"]:
                 text += f"   [{line['note']}]"
             self.list_widget.addItem(text)
@@ -161,6 +163,151 @@ class DeleteItemDialog(QDialog):
 
     def get_selected_count(self) -> int:
         return self.selected_count
+
+
+# ---------------------------------------------------------------------------
+#  PlateDialog
+# ---------------------------------------------------------------------------
+class PlateDialog(QDialog):
+    """
+    Reparte los platillos de un pedido en platos. Los tacos se piden por unidad:
+    si dos personas de la misma mesa piden tacos, cocina necesita saber cuales
+    van juntos en cada plato.
+    """
+
+    def __init__(self, order_manager, table: str, parent=None):
+        super().__init__(parent)
+        self.order_manager = order_manager
+        self.table = table
+        self.lines = []
+        self.setWindowTitle(f"Platos - {table}")
+        self.setMinimumSize(520, 460)
+        self.setup_ui()
+        self.refresh()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        help_label = QLabel(
+            "Selecciona un platillo, elige cuantas unidades y a que plato van.\n"
+            "Ejemplo: de 5 tacos al pastor, 3 al Plato 1 y 2 al Plato 2."
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setFont(QFont("Arial", 11))
+        self.list_widget.currentItemChanged.connect(lambda *_: self._on_selection())
+        layout.addWidget(self.list_widget, 1)
+
+        move_row = QHBoxLayout()
+        move_row.addWidget(QLabel("Cantidad:"))
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(1, 1)
+        move_row.addWidget(self.count_spin)
+        move_row.addWidget(QLabel("Mover a:"))
+        self.target_combo = QComboBox()
+        self.target_combo.setMinimumWidth(140)
+        move_row.addWidget(self.target_combo, 1)
+        self.move_btn = QPushButton("Mover")
+        self.move_btn.setObjectName("primaryButton")
+        self.move_btn.clicked.connect(self.move_selected)
+        move_row.addWidget(self.move_btn)
+        layout.addLayout(move_row)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        done_btn = QPushButton("Listo")
+        done_btn.setObjectName("successButton")
+        done_btn.clicked.connect(self.accept)
+        layout.addWidget(done_btn)
+        self.setLayout(layout)
+
+    def refresh(self, select_key=None):
+        self.lines = self.order_manager.get_order_lines(self.table)
+        used = self.order_manager.used_plates(self.table)
+        self.list_widget.blockSignals(True)
+        self.list_widget.clear()
+        to_select = None
+        indexed = [dict(line, index=i) for i, line in enumerate(self.lines)]
+        for plate, plate_lines in group_lines_by_plate(indexed):
+            header = QListWidgetItem(plate_label(plate) if plate else "Sin plato (bebidas y para compartir)")
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list_widget.addItem(header)
+            for line in plate_lines:
+                text = f"     {line['qty']}x {line['dish']} ({line['variant']})"
+                if line["note"]:
+                    text += f"   [{line['note']}]"
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, line["index"])
+                self.list_widget.addItem(item)
+                key = (line["dish"], line["variant"], line["note"], line["plate"])
+                if to_select is None or key == select_key:
+                    to_select = item
+        self.list_widget.blockSignals(False)
+
+        current_target = self.target_combo.currentData()
+        top = min(max(used + [0]) + 1, MAX_PLATES)
+        self.target_combo.clear()
+        self.target_combo.addItem("Sin plato", 0)
+        for plate in range(1, top + 1):
+            self.target_combo.addItem(plate_label(plate) + ("" if plate in used else "  (nuevo)"), plate)
+        if current_target is not None and self.target_combo.findData(current_target) >= 0:
+            self.target_combo.setCurrentIndex(self.target_combo.findData(current_target))
+        else:
+            self.target_combo.setCurrentIndex(self.target_combo.count() - 1)
+
+        if to_select is not None:
+            self.list_widget.setCurrentItem(to_select)
+        self._on_selection()
+
+    def selected_index(self):
+        item = self.list_widget.currentItem()
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def selected_line(self):
+        index = self.selected_index()
+        return None if index is None else self.lines[index]
+
+    def _on_selection(self):
+        line = self.selected_line()
+        enabled = line is not None and self.order_manager.plate_applies(line["category"])
+        self.count_spin.setEnabled(enabled)
+        self.target_combo.setEnabled(enabled)
+        self.move_btn.setEnabled(enabled)
+        if line is None:
+            return
+        self.count_spin.setRange(1, line["qty"])
+        self.count_spin.setValue(line["qty"])
+        if not enabled:
+            self.status_label.setText(f"{line['category']} no se asigna a un plato.")
+
+    def move_selected(self):
+        index = self.selected_index()
+        if index is None:
+            return
+        line = self.lines[index]
+        target = self.target_combo.currentData()
+        try:
+            moved, already_sent = self.order_manager.move_line_to_plate(
+                self.table, index, target, self.count_spin.value())
+        except (KeyError, ValueError, PermissionError) as e:
+            QMessageBox.warning(self, "No se pudo mover", str(e))
+            return
+        if not moved:
+            self.status_label.setText("Ese platillo ya esta en ese plato.")
+            return
+        text = f"{moved}x {line['dish']} ({line['variant']}) movido(s) al {plate_label(target)}."
+        if already_sent:
+            text += (f"\n{already_sent} ya habian salido en una comanda: avisa a cocina "
+                     f"o reimprime la comanda completa.")
+        self.status_label.setText(text)
+        self.refresh(select_key=(line["dish"], line["variant"], line["note"], target))
 
 
 # ---------------------------------------------------------------------------

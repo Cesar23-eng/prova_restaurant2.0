@@ -6,6 +6,7 @@ from .dialogs import (
     DeliveryDialog,
     EditTableDialog,
     PaymentDialog,
+    PlateDialog,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     'DeliveryDialog',
     'EditTableDialog',
     'PaymentDialog',
+    'PlateDialog',
 ]

@@ -163,6 +163,29 @@
     .qty span { min-width: 22px; text-align: center; font-weight: 700; }
     .note-input { margin-top: 8px; padding: 8px 10px !important; font-size: 0.88rem !important; }
     .note-tag { color: var(--accent); font-size: 0.82rem; font-style: italic; }
+
+    /* PLATOS */
+    .plate-bar { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-top: 8px; scrollbar-width: none; }
+    .plate-bar::-webkit-scrollbar { display: none; }
+    .plate-bar-label { font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+    .plate-chip {
+      min-width: 40px; padding: 7px 12px; border-radius: 20px; border: 2px solid var(--accent);
+      background: var(--surface); color: var(--accent); font-weight: 700; font-size: 0.85rem; white-space: nowrap;
+    }
+    .plate-chip.active { background: var(--accent); color: #fff; }
+    .plate-chip.plate-new { border-style: dashed; }
+    .plate-hint { font-size: 0.75rem; color: var(--muted); padding-top: 4px; }
+    .plate-header {
+      margin: 12px 0 2px; padding: 6px 10px; border-radius: 8px; background: #fdf0e6;
+      color: var(--accent); font-weight: 800; font-size: 0.9rem;
+    }
+    .plate-header:first-child { margin-top: 0; }
+    .line-bottom { display: flex; gap: 8px; margin-top: 8px; }
+    .line-bottom .note-input { margin-top: 0; flex: 1; min-width: 0; }
+    .plate-select {
+      padding: 6px; border: 2px solid var(--accent); border-radius: 10px; background: #fff;
+      font-weight: 700; color: var(--accent); font-size: 0.85rem;
+    }
     .total-row {
       display: flex; justify-content: space-between; font-size: 1.1rem;
       font-weight: 700; padding-top: 12px; color: var(--primary);
@@ -251,6 +274,8 @@
     <div class="sticky-tools">
       <input id="search" type="search" placeholder="🔍 Buscar: taco, horchata, birria..." autocomplete="off" />
       <div class="cat-tabs" id="cat-tabs"></div>
+      <div class="plate-bar" id="plate-bar"></div>
+      <div class="plate-hint" id="plate-hint"></div>
     </div>
     <div class="platillo-list" id="platillo-list"></div>
     <button class="btn btn-outline" type="button" data-go="screen-mesa">← Cambiar de mesa</button>
@@ -284,9 +309,12 @@
     menu: {},
     mesas: [],
     mesa: null,
-    cart: [],          // [{categoria, platillo, variante, precio, nota, cantidad}]
+    cart: [],          // [{categoria, platillo, variante, precio, nota, cantidad, plato}]
     requestId: null,   // se reutiliza en reintentos para no duplicar el pedido
     categoria: null,
+    plato: 1,          // plato al que van los platillos que se tocan (0 = sin plato)
+    platosMesa: [],    // platos que la mesa ya tiene en la caja
+    ajustes: { categorias_sin_plato: [], max_platos: 30 },
     newMesaTipo: 'En el local',
     screen: 'screen-mesa',
   };
@@ -316,6 +344,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         pin: state.pin, mesa: state.mesa, cart: state.cart, requestId: state.requestId,
+        plato: state.plato,
       }));
     } catch (e) { /* modo privado: se sigue sin guardar */ }
   }
@@ -327,6 +356,7 @@
       state.mesa = saved.mesa || null;
       state.cart = Array.isArray(saved.cart) ? saved.cart : [];
       state.requestId = saved.requestId || null;
+      state.plato = Number.isInteger(saved.plato) ? saved.plato : 1;
     } catch (e) { /* datos viejos o corruptos */ }
   }
 
@@ -379,7 +409,7 @@
     $('header-mesa').textContent = state.mesa ? '🍽️ ' + state.mesa : '';
     updateFab();
     if (screen === 'screen-mesa') loadMesas();
-    if (screen === 'screen-menu') renderMenu();
+    if (screen === 'screen-menu') { renderMenu(); loadPlatosMesa(); }
     if (screen === 'screen-carrito') { renderCart(); loadCurrentOrder(); }
     window.scrollTo(0, 0);
   }
@@ -437,6 +467,10 @@
     if (state.mesa !== nombre && state.cart.length) {
       if (!confirm(`Tienes ${cartUnits()} platillo(s) sin enviar para ${state.mesa}. ¿Pasarlos a ${nombre}?`)) return;
     }
+    if (state.mesa !== nombre) {
+      state.plato = 1;
+      state.platosMesa = [];
+    }
     state.mesa = nombre;
     save();
     show('screen-menu');
@@ -473,7 +507,9 @@
   // ============ MENU ============
   async function loadMenu() {
     try {
-      state.menu = await api('/api/menu');
+      const [menu, ajustes] = await Promise.all([api('/api/menu'), api('/api/ajustes').catch(() => null)]);
+      state.menu = menu;
+      if (ajustes) state.ajustes = ajustes;
     } catch (e) {
       if (e.status !== 401) toast('No se pudo cargar el menú: ' + e.message, 'error');
     }
@@ -487,10 +523,75 @@
       class: 'cat-tab' + (cat === state.categoria ? ' active' : ''),
       onclick: () => { state.categoria = cat; $('search').value = ''; renderMenu(); },
     }, cat)));
+    renderPlateBar();
     renderPlatillos();
   }
 
-  const normalize = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  // ============ PLATOS ============
+  // Los tacos se piden por unidad: el plato le dice a cocina como servirlos
+  const usaPlato = (categoria) => !(state.ajustes.categorias_sin_plato || [])
+    .some((c) => normalize(c) === normalize(categoria));
+  const platoDe = (categoria) => (usaPlato(categoria) ? state.plato : 0);
+  const platoLabel = (p) => (p ? `Plato ${p}` : 'Sin plato');
+  const platosDeItems = (items) => [...new Set(items.map((i) => i.plato || 0))].filter(Boolean);
+
+  function platosEnUso() {
+    const set = new Set([...state.platosMesa, ...platosDeItems(state.cart), state.plato]);
+    set.delete(0);
+    return [...set].sort((a, b) => a - b);
+  }
+
+  function elegirPlato(plato) {
+    state.plato = plato;
+    save();
+    renderPlateBar();
+    renderPlatillos();
+  }
+
+  function renderPlateBar() {
+    const platos = platosEnUso();
+    const siguiente = (platos.length ? Math.max(...platos) : 0) + 1;
+    const chip = (plato, text, extra = '') => h('button', {
+      type: 'button',
+      class: 'plate-chip' + extra + (state.plato === plato ? ' active' : ''),
+      onclick: () => elegirPlato(plato),
+    }, text);
+    $('plate-bar').replaceChildren(
+      h('span', { class: 'plate-bar-label' }, '🍽️ Plato:'),
+      ...platos.map((p) => chip(p, String(p))),
+      siguiente <= state.ajustes.max_platos ? chip(siguiente, '+ Nuevo', ' plate-new') : null,
+      chip(0, 'Sin plato'),
+    );
+    $('plate-hint').textContent = state.plato
+      ? `Lo que toques va al Plato ${state.plato}. Bebidas y jugos van aparte.`
+      : 'Lo que toques va sin plato (para compartir).';
+  }
+
+  async function loadPlatosMesa() {
+    const mesa = state.mesa;
+    try {
+      const pedido = await api('/api/pedido/' + encodeURIComponent(mesa));
+      if (state.mesa !== mesa) return;
+      state.platosMesa = platosDeItems(pedido.items);
+      renderPlateBar();
+    } catch (e) { /* la barra funciona igual sin los platos que ya tiene la mesa */ }
+  }
+
+  // Devuelve [[plato, [[item, indice], ...]], ...] con los platos en orden y "sin plato" al final
+  function agruparPorPlato(items) {
+    const grupos = new Map();
+    items.forEach((item, idx) => {
+      const plato = item.plato || 0;
+      if (!grupos.has(plato)) grupos.set(plato, []);
+      grupos.get(plato).push([item, idx]);
+    });
+    return [...grupos.entries()].sort(([a], [b]) => (a === 0) - (b === 0) || a - b);
+  }
+
+  const plateHeader = (plato) =>
+    h('div', { class: 'plate-header' }, plato ? `🍽️ Plato ${plato}` : 'Sin plato (bebidas y para compartir)');
+
+  const normalize = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
   function renderPlatillos() {
     const list = $('platillo-list');
@@ -528,8 +629,10 @@
 
   // ============ CARRITO ============
   const cartUnits = () => state.cart.reduce((n, l) => n + l.cantidad, 0);
+  // Cuantos hay en el carrito para el plato elegido
   const unitsFor = (categoria, platillo, variante) => state.cart
-    .filter((l) => l.categoria === categoria && l.platillo === platillo && l.variante === variante)
+    .filter((l) => l.categoria === categoria && l.platillo === platillo && l.variante === variante
+      && (l.plato || 0) === platoDe(categoria))
     .reduce((n, l) => n + l.cantidad, 0);
 
   function cartChanged() {
@@ -538,11 +641,14 @@
     updateFab();
   }
 
+  const sameLine = (a, b) => a.categoria === b.categoria && a.platillo === b.platillo
+    && a.variante === b.variante && (a.nota || '') === (b.nota || '') && (a.plato || 0) === (b.plato || 0);
+
   function addToCart(categoria, platillo, variante, precio, btn) {
-    const line = state.cart.find((l) => l.categoria === categoria && l.platillo === platillo
-      && l.variante === variante && !l.nota);
+    const nueva = { categoria, platillo, variante, precio, nota: '', cantidad: 1, plato: platoDe(categoria) };
+    const line = state.cart.find((l) => sameLine(l, nueva));
     if (line) line.cantidad += 1;
-    else state.cart.push({ categoria, platillo, variante, precio, nota: '', cantidad: 1 });
+    else state.cart.push(nueva);
     cartChanged();
     if (navigator.vibrate) navigator.vibrate(15);
     btn.classList.add('flash');
@@ -565,25 +671,64 @@
       return;
     }
     const total = state.cart.reduce((sum, l) => sum + l.precio * l.cantidad, 0);
+    const platos = platosEnUso();
+    const maxOpcion = Math.min((platos.length ? Math.max(...platos) : 0) + 1, state.ajustes.max_platos);
+    const conPlatos = state.cart.some((l) => l.plato);
+    const rows = [];
+    for (const [plato, lineas] of agruparPorPlato(state.cart)) {
+      if (conPlatos) rows.push(plateHeader(plato));
+      for (const [line, idx] of lineas) rows.push(renderCartLine(line, idx, maxOpcion));
+    }
     body.replaceChildren(
-      ...state.cart.map((line, idx) => h('div', { class: 'line' },
-        h('div', { class: 'line-top' },
-          h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
-          h('div', { class: 'qty' },
-            h('button', { type: 'button', 'aria-label': 'Quitar uno', onclick: () => changeQty(idx, -1) }, '−'),
-            h('span', {}, line.cantidad),
-            h('button', { type: 'button', 'aria-label': 'Agregar uno', onclick: () => changeQty(idx, 1) }, '+'),
-          ),
-          h('div', { class: 'line-price' }, money(line.precio * line.cantidad)),
-        ),
-        h('input', {
-          type: 'text', class: 'note-input', maxLength: 120, value: line.nota,
-          placeholder: '📝 Nota para cocina (sin cebolla, bien cocido...)',
-          onchange: (e) => { line.nota = e.target.value.trim(); cartChanged(); },
-        }),
-      )),
+      ...rows,
       h('div', { class: 'total-row' }, h('span', {}, 'Total a enviar'), h('span', {}, money(total))),
     );
+  }
+
+  function renderCartLine(line, idx, maxOpcion) {
+    let plateSelect = null;
+    if (usaPlato(line.categoria)) {
+      const opciones = [];
+      for (let p = 0; p <= maxOpcion; p++) {
+        opciones.push(h('option', { value: String(p), selected: (line.plato || 0) === p }, platoLabel(p)));
+      }
+      plateSelect = h('select', {
+        class: 'plate-select', 'aria-label': 'Plato',
+        onchange: (e) => moveLineToPlate(idx, Number(e.target.value)),
+      }, opciones);
+    }
+    return h('div', { class: 'line' },
+      h('div', { class: 'line-top' },
+        h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
+        h('div', { class: 'qty' },
+          h('button', { type: 'button', 'aria-label': 'Quitar uno', onclick: () => changeQty(idx, -1) }, '−'),
+          h('span', {}, line.cantidad),
+          h('button', { type: 'button', 'aria-label': 'Agregar uno', onclick: () => changeQty(idx, 1) }, '+'),
+        ),
+        h('div', { class: 'line-price' }, money(line.precio * line.cantidad)),
+      ),
+      h('div', { class: 'line-bottom' },
+        plateSelect,
+        h('input', {
+          type: 'text', class: 'note-input', maxLength: 120, value: line.nota,
+          placeholder: '📝 Nota (sin cebolla...)',
+          onchange: (e) => { line.nota = e.target.value.trim(); cartChanged(); },
+        }),
+      ),
+    );
+  }
+
+  function moveLineToPlate(idx, plato) {
+    const line = state.cart[idx];
+    line.plato = plato;
+    // Si ese plato ya tenia la misma linea, se juntan
+    const twin = state.cart.findIndex((l, i) => i !== idx && sameLine(l, line));
+    if (twin >= 0) {
+      state.cart[twin].cantidad += line.cantidad;
+      state.cart.splice(idx, 1);
+    }
+    cartChanged();
+    renderCart();
   }
 
   function changeQty(idx, delta) {
@@ -598,16 +743,26 @@
     const card = $('current-order-card');
     try {
       const pedido = await api('/api/pedido/' + encodeURIComponent(state.mesa));
+      state.platosMesa = platosDeItems(pedido.items);
+      renderCart();
       if (!pedido.items.length) { card.hidden = true; return; }
       $('current-order-total').textContent = money(pedido.total);
-      $('current-order-body').replaceChildren(...pedido.items.map((item) => h('div', { class: 'line' },
-        h('div', { class: 'line-top' },
-          h('div', { class: 'line-name' }, `${item.cantidad}× ${item.platillo}`,
-            h('small', {}, item.variante),
-            item.nota ? h('span', { class: 'note-tag' }, '📝 ' + item.nota) : null),
-          h('div', { class: 'line-price' }, money(item.subtotal)),
-        ),
-      )));
+      const conPlatos = pedido.items.some((i) => i.plato);
+      const rows = [];
+      for (const [plato, items] of agruparPorPlato(pedido.items)) {
+        if (conPlatos) rows.push(plateHeader(plato));
+        for (const [item] of items) {
+          rows.push(h('div', { class: 'line' },
+            h('div', { class: 'line-top' },
+              h('div', { class: 'line-name' }, `${item.cantidad}× ${item.platillo}`,
+                h('small', {}, item.variante),
+                item.nota ? h('span', { class: 'note-tag' }, '📝 ' + item.nota) : null),
+              h('div', { class: 'line-price' }, money(item.subtotal)),
+            ),
+          ));
+        }
+      }
+      $('current-order-body').replaceChildren(...rows);
       card.hidden = false;
       if (pedido.pagado) toast('Esta mesa ya fue cobrada. Elige otra.', 'error');
     } catch (e) {

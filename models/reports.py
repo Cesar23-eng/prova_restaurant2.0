@@ -121,11 +121,16 @@ def parse_order_number(number: str) -> int:
 #  Resumen / cierre de caja
 # ---------------------------------------------------------------------------
 def items_text(lines: List[Dict]) -> str:
-    parts = []
+    # En el Excel no importa en que plato se sirvio: se suman las mismas lineas
+    merged: "OrderedDict[Tuple[str, str, str], int]" = OrderedDict()
     for line in lines:
-        text = f"{line['dish']} ({line['variant']}) x{line['qty']}"
-        if line.get("note"):
-            text += f" [{line['note']}]"
+        key = (line["dish"], line["variant"], line.get("note", ""))
+        merged[key] = merged.get(key, 0) + int(line["qty"])
+    parts = []
+    for (dish, variant, note), qty in merged.items():
+        text = f"{dish} ({variant}) x{qty}"
+        if note:
+            text += f" [{note}]"
         parts.append(text)
     return "; ".join(parts)
 

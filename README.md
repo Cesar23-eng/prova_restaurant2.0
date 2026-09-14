@@ -32,6 +32,22 @@ Copia `menu_precios.xlsx` y `prova.png` junto a `dist/main.exe`.
 
 En la lista de mesas, la campana (🔔) indica platillos que todavia no salieron en una comanda.
 
+### Platos (emplatado para cocina)
+
+Los tacos se piden por unidad. Si en una mesa dos personas piden tacos, cada
+platillo se asigna a un plato para que cocina sepa que va junto:
+
+- **Caja:** elige el plato en el selector **Plato** junto a la cantidad antes de agregar.
+  Al cambiar de mesa queda seleccionado el ultimo plato usado. El boton **Platos**
+  permite repartir despues (ej. de 5 tacos al pastor, 2 al Plato 2).
+- **Celular:** en el menu, la barra *Plato: 1 2 + Nuevo* indica a que plato va lo que
+  se toca; en el carrito cada linea tiene su selector de plato.
+- **Comanda de cocina:** sale agrupada (`== PLATO 1 ==`, `== PLATO 2 ==`). Si se agregan
+  platillos a un plato que cocina ya recibio, el encabezado dice *(agregar)*.
+- Las categorias de `categorias_sin_plato` en `config.json` (por defecto *Bebidas* y
+  *Jugos*) nunca llevan plato. La cuenta del cliente y el Excel suman las lineas sin
+  separarlas por plato.
+
 ### Meseros desde el celular
 
 1. El celular debe estar en el mismo WiFi que la PC de caja.
@@ -53,7 +69,7 @@ Todo se guarda en la carpeta `data/` junto al programa:
 | `AAAA-MM-DD/ventas_AAAA-MM-DD.jsonl` | Registro de cada cobro (fuente de verdad) |
 | `AAAA-MM-DD/pedidos_AAAA-MM-DD.xlsx` | Excel del dia: hojas *En el local*, *Para llevar* y *Resumen* |
 | `AAAA-MM-DD/audit_log_AAAA-MM-DD.txt` | Auditoria: quien agrego, quito, cobro o elimino |
-| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema |
+| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema, categorias sin plato |
 | `errores.log` | Errores inesperados (la app no se cierra, avisa y registra) |
 
 - Si el Excel del dia esta abierto al cobrar, la venta igual queda registrada y la

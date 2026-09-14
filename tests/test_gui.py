@@ -153,3 +153,89 @@ def test_payment_dialog_rejects_insufficient_mixed(qapp, messages):
     dialog.confirm_payment()
     assert dialog.result() != dialog.DialogCode.Accepted
     assert messages[-1][0] == "warning"
+
+
+def test_add_items_to_plates_from_caja(window, manager):
+    manager.create_table("Mesa 1")
+    select(window, "Mesa 1")
+    assert window.plate_combo.currentData() == 1
+    window.dish_combo.setCurrentText("Taco")
+    window.variant_combo.setCurrentIndex(window.variant_combo.findData("Pastor"))
+    window.qty_spin.setValue(3)
+    window.add_order()
+    window.plate_combo.setCurrentIndex(window.plate_combo.findData(2))
+    window.qty_spin.setValue(2)
+    window.add_order()
+    # la bebida va sin plato aunque el combo diga Plato 2
+    window.search_input.setText("Coca cola (Botella) - Bs 10.00")
+    window.on_quick_add()
+    assert window.plate_combo.currentData() == 2
+    assert [(l["plate"], l["variant"], l["qty"]) for l in manager.get_order_lines("Mesa 1")] == [
+        (1, "Pastor", 3), (2, "Pastor", 2), (0, "Botella", 1),
+    ]
+    text = window.order_display.toPlainText()
+    assert text.index("Plato 1") < text.index("Plato 2") < text.index("Sin plato")
+    assert [window.plate_combo.itemData(i) for i in range(window.plate_combo.count())] == [0, 1, 2, 3]
+
+
+def test_plate_combo_defaults_to_last_used_plate_when_switching_tables(window, manager):
+    manager.create_table("Mesa 1")
+    manager.create_table("Mesa 2")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, plate=3)
+    select(window, "Mesa 1")
+    assert window.plate_combo.currentData() == 3
+    select(window, "Mesa 2")
+    assert window.plate_combo.currentData() == 1
+
+
+def test_kitchen_ticket_groups_by_plate_and_marks_additions(window, manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Birria", 15, qty=2, plate=2, note="sin cebolla")
+    manager.add_item("Mesa 1", "Bebidas", "Coca cola", "Botella", 10)
+    order = manager.get_order("Mesa 1")
+    html_text = window.kitchen_ticket_html("Mesa 1", order, manager.get_order_lines("Mesa 1"), False)
+    assert (html_text.index("PLATO 1") < html_text.index("Pastor") < html_text.index("PLATO 2")
+            < html_text.index("Birria") < html_text.index("SIN PLATO / BEBIDAS"))
+    assert "sin cebolla" in html_text
+
+    manager.mark_sent_to_kitchen("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15, plate=2)
+    order = manager.get_order("Mesa 1")
+    pending = manager.get_order_lines("Mesa 1", kitchen_pending_only=True)
+    html_text = window.kitchen_ticket_html("Mesa 1", order, pending, False)
+    assert "PLATO 2 (agregar)" in html_text and "PLATO 1" not in html_text
+
+
+def test_plate_dialog_splits_line_between_plates(window, manager, qapp):
+    from views.dialogs import PlateDialog
+
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=5, plate=1)
+    manager.add_item("Mesa 1", "Bebidas", "Coca cola", "Botella", 10)
+    dialog = PlateDialog(manager, "Mesa 1", window)
+    assert dialog.selected_line()["variant"] == "Pastor"
+    dialog.count_spin.setValue(2)
+    dialog.target_combo.setCurrentIndex(dialog.target_combo.findData(2))
+    dialog.move_selected()
+    assert {l["plate"]: l["qty"] for l in manager.get_order_lines("Mesa 1") if l["dish"] == "Taco"} == {1: 3, 2: 2}
+    assert "movido(s) al Plato 2" in dialog.status_label.text()
+
+    # las bebidas no se pueden mover a un plato
+    for i in range(dialog.list_widget.count()):
+        item = dialog.list_widget.item(i)
+        if "Coca cola" in item.text():
+            dialog.list_widget.setCurrentItem(item)
+    assert not dialog.move_btn.isEnabled()
+    dialog.close()
+
+
+def test_customer_bill_merges_plates(window, manager, monkeypatch):
+    printed = []
+    monkeypatch.setattr(window, "print_html", lambda body: printed.append(body) or True)
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=2)
+    select(window, "Mesa 1")
+    window.print_customer_bill()
+    assert "5x Taco (Pastor)" in printed[0] and "Plato" not in printed[0]

@@ -5,7 +5,7 @@ import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from models import reports
 from utils.config import atomic_write_text, business_date, data_root, day_dir, load_config
@@ -18,6 +18,8 @@ PAYMENT_METHODS = ("Efectivo", "QR", "Mixto")
 STATE_FILENAME = "estado_pedidos.json"
 MAX_NOTE_LENGTH = 120
 MAX_QTY_PER_ADD = 100
+# Plato 0 = sin plato (bebidas, cosas para compartir)
+MAX_PLATES = 30
 
 
 class OrderChangedError(Exception):
@@ -41,6 +43,18 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now()
 
 
+def plate_label(plate: int) -> str:
+    return f"Plato {plate}" if plate else "Sin plato"
+
+
+def group_lines_by_plate(lines: List[Dict]) -> List[Tuple[int, List[Dict]]]:
+    """Agrupa lineas por plato: Plato 1, Plato 2... y al final las que no tienen plato."""
+    groups: "OrderedDict[int, List[Dict]]" = OrderedDict()
+    for line in sorted(lines, key=lambda l: (not l.get("plate"), l.get("plate", 0))):
+        groups.setdefault(line.get("plate", 0), []).append(line)
+    return list(groups.items())
+
+
 class OrderManager:
     """
     Pedidos abiertos del local.
@@ -52,12 +66,18 @@ class OrderManager:
     """
 
     def __init__(self, root: Optional[str] = None, cutoff_hour: Optional[int] = None,
-                 restore: bool = True):
+                 restore: bool = True, no_plate_categories: Optional[Iterable[str]] = None):
         self.root = root or data_root()
         os.makedirs(self.root, exist_ok=True)
-        if cutoff_hour is None:
-            cutoff_hour = int(load_config(self.root).get("hora_corte_jornada", 4))
+        if cutoff_hour is None or no_plate_categories is None:
+            config = load_config(self.root)
+            if cutoff_hour is None:
+                cutoff_hour = int(config.get("hora_corte_jornada", 4))
+            if no_plate_categories is None:
+                no_plate_categories = config.get("categorias_sin_plato", [])
         self.cutoff_hour = cutoff_hour
+        self.no_plate_categories = [str(c) for c in no_plate_categories]
+        self._no_plate_norm = {self._norm(c) for c in self.no_plate_categories}
 
         self._lock = threading.RLock()
         self._excel_lock = threading.Lock()
@@ -156,6 +176,7 @@ class OrderManager:
             for item in order["items"]:
                 item.setdefault("note", "")
                 item.setdefault("kitchen_sent", False)
+                item.setdefault("plate", 0)
             self._orders[name] = order
             if not order["paid"]:
                 self.restored_count += 1
@@ -303,11 +324,25 @@ class OrderManager:
         self._notify("updated", table_name)
 
     def add_item(self, table_name: str, category: str, dish: str, variant: str, price: float,
-                 note: str = "", qty: int = 1, source: str = "caja"):
+                 note: str = "", qty: int = 1, source: str = "caja", plate: int = 0):
         self.add_items(table_name, [{
             "category": category, "dish": dish, "variant": variant,
-            "price": price, "note": note, "qty": qty,
+            "price": price, "note": note, "qty": qty, "plate": plate,
         }], source=source)
+
+    def plate_applies(self, category: str) -> bool:
+        """Las categorias configuradas (bebidas, jugos) no se emplatan."""
+        return self._norm(category) not in self._no_plate_norm
+
+    @staticmethod
+    def _parse_plate(value) -> int:
+        try:
+            plate = int(value or 0)
+        except (TypeError, ValueError):
+            raise ValueError(f"Plato invalido: {value}")
+        if not 0 <= plate <= MAX_PLATES:
+            raise ValueError(f"El plato debe estar entre 1 y {MAX_PLATES}")
+        return plate
 
     def add_items(self, table_name: str, items: List[Dict], source: str = "caja") -> int:
         """Agrega varios items de una sola vez: o entran todos o ninguno."""
@@ -326,12 +361,15 @@ class OrderManager:
             if price < 0 or not 1 <= qty <= MAX_QTY_PER_ADD:
                 raise ValueError(f"Precio o cantidad invalida para {dish}")
             note = self._clean(item.get("note", ""))[:MAX_NOTE_LENGTH]
+            category = self._clean(item.get("category", ""))
+            plate = self._parse_plate(item.get("plate")) if self.plate_applies(category) else 0
             unit = {
-                "category": self._clean(item.get("category", "")),
+                "category": category,
                 "dish": dish,
                 "variant": variant,
                 "price": price,
                 "note": note,
+                "plate": plate,
                 "source": source,
                 "added_at": stamp,
                 "kitchen_sent": False,
@@ -349,14 +387,18 @@ class OrderManager:
             detail = f"{line['dish']} ({line['variant']}) x{line['qty']} Bs{line['unit_price']:.2f}"
             if line["note"]:
                 detail += f" nota={line['note']}"
+            if line["plate"]:
+                detail += f" plato={line['plate']}"
             self._audit("AGREGAR", table_name, f"{detail} origen={source}")
         self._notify("items_added", table_name, source=source, count=len(prepared))
         return len(prepared)
 
-    def add_item_to_order(self, category, dish, variant, price, note: str = "", qty: int = 1):
+    def add_item_to_order(self, category, dish, variant, price, note: str = "", qty: int = 1,
+                          plate: int = 0):
         if not self.current_table:
             raise ValueError("No hay mesa seleccionada")
-        self.add_item(self.current_table, category, dish, variant, price, note=note, qty=qty)
+        self.add_item(self.current_table, category, dish, variant, price, note=note, qty=qty,
+                      plate=plate)
 
     def remove_line(self, table_name: str, line_index: int, count: int = 1) -> int:
         """Quita `count` unidades de una linea agrupada del pedido."""
@@ -380,9 +422,49 @@ class OrderManager:
         self._notify("items_removed", table_name, count=removed)
         return removed
 
+    def move_line_to_plate(self, table_name: str, line_index: int, plate: int,
+                           count: Optional[int] = None) -> Tuple[int, int]:
+        """
+        Mueve unidades de una linea a otro plato (p. ej. 2 de los 5 tacos al Plato 2).
+        Devuelve (unidades movidas, cuantas de ellas ya habian salido en una comanda).
+        """
+        plate = self._parse_plate(plate)
+        with self._lock:
+            order = self._get(table_name)
+            self._ensure_open(order)
+            lines = self._group_lines(order["items"])
+            if not 0 <= line_index < len(lines):
+                return 0, 0
+            line = lines[line_index]
+            if plate and not self.plate_applies(line["category"]):
+                raise ValueError(f"{line['category']} no se asigna a un plato")
+            if line["plate"] == plate:
+                return 0, 0
+            count = line["qty"] if count is None else max(0, min(int(count), line["qty"]))
+            matching = [i for i in order["items"] if self._line_key(i) == line["key"]]
+            # Primero las unidades que cocina todavia no recibio
+            matching.sort(key=lambda i: bool(i.get("kitchen_sent")))
+            moved = matching[:count]
+            for item in moved:
+                item["plate"] = plate
+            already_sent = sum(1 for i in moved if i.get("kitchen_sent"))
+            if moved:
+                self._save_state()
+        if moved:
+            self._audit("PLATO", table_name,
+                        f"{line['dish']} ({line['variant']}) x{len(moved)} "
+                        f"{plate_label(line['plate'])} -> {plate_label(plate)}")
+            self._notify("updated", table_name)
+        return len(moved), already_sent
+
+    def used_plates(self, table_name: str) -> List[int]:
+        with self._lock:
+            order = self._orders.get(table_name)
+            return sorted({i.get("plate", 0) for i in order["items"]} - {0}) if order else []
+
     @staticmethod
     def _line_key(item: Dict) -> Tuple:
-        return item["dish"], item["variant"], item.get("note", ""), item["price"]
+        return item["dish"], item["variant"], item.get("note", ""), item["price"], item.get("plate", 0)
 
     @classmethod
     def _group_lines(cls, items: List[Dict]) -> List[Dict]:
@@ -397,6 +479,7 @@ class OrderManager:
                     "dish": item["dish"],
                     "variant": item["variant"],
                     "note": item.get("note", ""),
+                    "plate": item.get("plate", 0),
                     "unit_price": item["price"],
                     "qty": 0,
                     "subtotal": 0.0,

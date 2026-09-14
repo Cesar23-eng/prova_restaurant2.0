@@ -145,6 +145,11 @@ class ThemeManager:
                 border-radius: 8px;
             }}
 
+            QListWidget::item:selected {{
+                background-color: {theme['primary']};
+                color: white;
+            }}
+
             QRadioButton, QCheckBox, QGroupBox {{
                 color: {theme['text']};
             }}

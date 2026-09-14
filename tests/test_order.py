@@ -200,3 +200,74 @@ def test_kitchen_ticket_only_includes_new_items(manager):
     pending = manager.get_order_lines("Mesa 1", kitchen_pending_only=True)
     assert [(l["dish"], l["qty"]) for l in pending] == [("Coca cola", 1)]
     assert len(manager.get_order_lines("Mesa 1")) == 2
+
+
+def test_items_are_grouped_by_plate(manager):
+    from models.order import group_lines_by_plate
+
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=2)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Birria", 15, qty=1, plate=1)
+    manager.add_item("Mesa 1", "Bebidas", "Coca cola", "Botella", 10, plate=2)
+    groups = group_lines_by_plate(manager.get_order_lines("Mesa 1"))
+    assert [(plate, [(l["variant"], l["qty"]) for l in lines]) for plate, lines in groups] == [
+        (1, [("Pastor", 3), ("Birria", 1)]),
+        (2, [("Pastor", 2)]),
+        (0, [("Botella", 1)]),
+    ]
+    assert manager.used_plates("Mesa 1") == [1, 2]
+
+
+def test_drinks_never_get_a_plate(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Jugos", "Horchata", "Vaso", 15, plate=3)
+    assert manager.get_items("Mesa 1")[0]["plate"] == 0
+    with pytest.raises(ValueError):
+        manager.move_line_to_plate("Mesa 1", 0, 1)
+
+
+def test_invalid_plate_is_rejected(manager):
+    manager.create_table("Mesa 1")
+    with pytest.raises(ValueError):
+        manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, plate=99)
+    assert manager.get_items("Mesa 1") == []
+
+
+def test_move_units_between_plates_prefers_unsent_units(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=1)
+    manager.mark_sent_to_kitchen("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
+    assert manager.move_line_to_plate("Mesa 1", 0, 2, count=3) == (3, 0)
+    assert manager.move_line_to_plate("Mesa 1", 0, 2, count=1) == (1, 1)
+    lines = {l["plate"]: l["qty"] for l in manager.get_order_lines("Mesa 1")}
+    assert lines == {1: 1, 2: 4}
+    assert manager.get_total("Mesa 1") == 75.0
+
+
+def test_plates_survive_restart_and_old_items_have_no_plate(manager, data_dir):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, plate=2)
+    state_path = os.path.join(data_dir, "estado_pedidos.json")
+    with open(state_path, encoding="utf-8") as f:
+        state = json.load(f)
+    state["orders"][0]["items"].append({"category": "Platillos", "dish": "Taco", "variant": "Carne",
+                                        "price": 15, "note": ""})
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    restored = OrderManager(root=data_dir, cutoff_hour=4)
+    assert [i["plate"] for i in restored.get_items("Mesa 1")] == [2, 0]
+
+
+def test_sale_excel_text_merges_plates(manager):
+    from models import reports
+
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=2)
+    manager.register_payment("Mesa 1", "QR", qr_amount=75)
+    sale = reports.read_sales(manager.root, manager.today())[0]
+    assert [l["plate"] for l in sale["items"]] == [1, 2]
+    assert reports.items_text(sale["items"]) == "Taco (Pastor) x5"
+    assert manager.day_summary()["products"][0]["qty"] == 5

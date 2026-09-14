@@ -22,6 +22,8 @@ DEFAULT_CONFIG = {
     # (un local que cierra a la 1am no parte sus ventas en dos archivos).
     "hora_corte_jornada": 4,
     "tema": "light",
+    # Categorias del menu que nunca van en un plato (se sirven aparte)
+    "categorias_sin_plato": ["Bebidas", "Jugos"],
 }
 
 _config_lock = threading.Lock()
