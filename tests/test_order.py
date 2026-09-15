@@ -271,3 +271,27 @@ def test_sale_excel_text_merges_plates(manager):
     assert [l["plate"] for l in sale["items"]] == [1, 2]
     assert reports.items_text(sale["items"]) == "Taco (Pastor) x5"
     assert manager.day_summary()["products"][0]["qty"] == 5
+
+
+def test_line_quantity_note_and_kitchen_counters(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=1)
+    manager.mark_sent_to_kitchen("Mesa 1")
+    assert manager.add_to_line("Mesa 1", 0, count=2) == 2
+    line = manager.get_order_lines("Mesa 1")[0]
+    assert (line["qty"], line["pending_kitchen"], line["plate"]) == (4, 2, 1)
+    assert manager.set_line_note("Mesa 1", 0, "sin cebolla") == (4, 2)
+    assert manager.get_order_lines("Mesa 1")[0]["note"] == "sin cebolla"
+    assert manager.set_line_note("Mesa 1", 0, "sin cebolla") == (0, 0)
+
+
+def test_remove_paid_orders(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15)
+    manager.register_payment("Mesa 1", "QR", qr_amount=15)
+    manager.create_table("Mesa 2")
+    manager.set_current_table("Mesa 1")
+    assert manager.remove_paid_orders() == 1
+    assert manager.get_all_tables() == ["Mesa 2"]
+    assert manager.current_table is None
+    assert manager.day_summary()["orders"] == 1

@@ -16,12 +16,16 @@ import threading
 import time
 
 DEFAULT_CONFIG = {
-    "nombre_local": "PROVA - Comida Mexicana",
+    "nombre_local": "PRÖVA México",
+    "ciudad": "Santa Cruz de la Sierra",
     "puerto_meseros": 5000,
     # Los pedidos entre medianoche y esta hora cuentan para el dia anterior
     # (un local que cierra a la 1am no parte sus ventas en dos archivos).
     "hora_corte_jornada": 4,
-    "tema": "light",
+    # "noche" (negro de la marca) o "dia" (concreto claro)
+    "tema_visual": "noche",
+    # Botones rapidos "Mesa 1..N" al crear un pedido
+    "numero_mesas": 8,
     # Categorias del menu que nunca van en un plato (se sirven aparte)
     "categorias_sin_plato": ["Bebidas", "Jugos"],
 }

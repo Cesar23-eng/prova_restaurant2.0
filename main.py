@@ -4,6 +4,7 @@ import sys
 import traceback
 
 from PyQt6.QtCore import QLockFile, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from utils.config import data_root, load_config
@@ -36,12 +37,13 @@ def main() -> int:
     install_error_handler()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setApplicationName("PROVA")
+    app.setApplicationName("PRÖVA México")
+    app.setFont(QFont("Segoe UI", 10))
 
     # Dos copias abiertas pisarian los pedidos guardadas una de la otra
     lock = QLockFile(os.path.join(data_root(), "prova.lock"))
     if not lock.tryLock(200):
-        QMessageBox.warning(None, "PROVA", "PROVA ya esta abierto en esta computadora.")
+        QMessageBox.warning(None, "PRÖVA", "PRÖVA ya esta abierto en esta computadora.")
         return 1
 
     from models.menu import MenuData
@@ -51,7 +53,8 @@ def main() -> int:
     config = load_config()
     order_manager = OrderManager(cutoff_hour=int(config.get("hora_corte_jornada", 4)))
     window = ProvaRestaurant(order_manager, MenuData(), config)
-    window.show()
+    # En la caja se trabaja con la ventana completa
+    window.showMaximized()
 
     # El servidor de meseros arranca cuando la ventana ya esta visible
     QTimer.singleShot(300, window.start_waiter_server)

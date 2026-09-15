@@ -483,10 +483,62 @@ class OrderManager:
                     "unit_price": item["price"],
                     "qty": 0,
                     "subtotal": 0.0,
+                    "pending_kitchen": 0,
                 }
             line["qty"] += 1
             line["subtotal"] = round(line["subtotal"] + item["price"], 2)
+            if not item.get("kitchen_sent"):
+                line["pending_kitchen"] += 1
         return list(lines.values())
+
+    def _line_at(self, order: Dict, line_index: int) -> Optional[Dict]:
+        lines = self._group_lines(order["items"])
+        return lines[line_index] if 0 <= line_index < len(lines) else None
+
+    def add_to_line(self, table_name: str, line_index: int, count: int = 1,
+                    source: str = "caja") -> int:
+        """Suma unidades iguales a una linea (mismo precio, nota y plato)."""
+        with self._lock:
+            line = self._line_at(self._get(table_name), line_index)
+        if line is None:
+            return 0
+        return self.add_items(table_name, [{
+            "category": line["category"], "dish": line["dish"], "variant": line["variant"],
+            "price": line["unit_price"], "note": line["note"], "qty": count, "plate": line["plate"],
+        }], source=source)
+
+    def set_line_note(self, table_name: str, line_index: int, note: str) -> Tuple[int, int]:
+        """Cambia la nota de una linea. Devuelve (unidades, cuantas ya salieron en comanda)."""
+        note = self._clean(note)[:MAX_NOTE_LENGTH]
+        with self._lock:
+            order = self._get(table_name)
+            self._ensure_open(order)
+            line = self._line_at(order, line_index)
+            if line is None or line["note"] == note:
+                return 0, 0
+            changed = [i for i in order["items"] if self._line_key(i) == line["key"]]
+            for item in changed:
+                item["note"] = note
+            already_sent = sum(1 for i in changed if i.get("kitchen_sent"))
+            self._save_state()
+        self._audit("NOTA", table_name, f"{line['dish']} ({line['variant']}) nota={note or '-'}")
+        self._notify("updated", table_name)
+        return len(changed), already_sent
+
+    def remove_paid_orders(self) -> int:
+        """Quita de la lista los pedidos ya cobrados (siguen en el Excel del dia)."""
+        with self._lock:
+            paid = [name for name, order in self._orders.items() if order["paid"]]
+            for name in paid:
+                del self._orders[name]
+            if self.current_table in paid:
+                self.current_table = None
+            if paid:
+                self._save_state()
+        if paid:
+            self._audit("LIMPIAR", "-", f"{len(paid)} pedidos pagados: {', '.join(paid)}")
+            self._notify("deleted", "")
+        return len(paid)
 
     def get_order_lines(self, table_name: str, kitchen_pending_only: bool = False) -> List[Dict]:
         with self._lock:

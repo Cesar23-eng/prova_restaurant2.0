@@ -223,7 +223,7 @@ def _style_header(ws, headers):
     for col in range(1, len(headers) + 1):
         cell = ws.cell(1, col)
         cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1A5276")
+        cell.fill = PatternFill("solid", fgColor="141414")  # negro de la marca PRÖVA
         cell.alignment = Alignment(horizontal="center")
     ws.freeze_panes = "A2"
 

@@ -2,30 +2,55 @@ import datetime
 import html
 import os
 
-from PyQt6.QtCore import QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QPalette, QPixmap, QShortcut
+from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QKeySequence, QPalette, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QCompleter, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QSpinBox, QTextBrowser, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from models.menu import MenuData
 from models.order import (
-    MAX_PLATES, ORDER_TYPE_TAKEAWAY, ORDER_TYPES, OrderChangedError, OrderManager,
+    MAX_PLATES, ORDER_TYPE_LOCAL, ORDER_TYPE_TAKEAWAY, OrderChangedError, OrderManager,
     group_lines_by_plate, plate_label,
 )
 from utils.config import app_dir, load_config, save_config_value
-from utils.styles import ThemeManager
+from utils.icons import category_icon, normalize_text, product_icon
+from utils.styles import THEME_NAMES, ThemeManager
 from views.dialogs import (
-    AddOrderDialog, DaySummaryDialog, DeleteItemDialog, DeliveryDialog, EditTableDialog,
-    PaymentDialog, PlateDialog, money,
+    AddOrderDialog, DaySummaryDialog, DeliveryDialog, EditTableDialog, PaymentDialog, PlateDialog,
+)
+from views.widgets import (
+    PRODUCT_CARD_MIN_WIDTH, FlowLayout, OrderCard, ProductCard, TicketLine, Toast, clear_layout,
+    format_minutes, make_button, make_label, money, set_prop,
 )
 
-NO_TABLE_TEXT = "Seleccione una mesa o cree un nuevo pedido"
+MENU_SPACING = 10
+
+
+def _scroll_area(widget: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setWidget(widget)
+    return scroll
+
+
+def _minutes_since(stamp: str) -> int:
+    try:
+        started = datetime.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, int((datetime.datetime.now() - started).total_seconds() // 60))
 
 
 class ProvaRestaurant(QMainWindow):
+    """
+    Caja de PRÖVA México en tres columnas, como un POS de restaurante:
+    pedidos abiertos | menu tactil (un toque agrega) | ticket del pedido.
+    """
+
     # Emitida desde cualquier hilo (p. ej. el servidor de meseros); Qt la entrega en el hilo de la UI
     orders_changed = pyqtSignal(str, str, dict)
 
@@ -36,117 +61,451 @@ class ProvaRestaurant(QMainWindow):
         self.menu_data = menu_data or MenuData()
         self.order_manager = order_manager or OrderManager(
             cutoff_hour=int(self.config.get("hora_corte_jornada", 4)))
-        self.theme_manager = ThemeManager(self.config.get("tema", "light"))
-        self.local_name = self.config.get("nombre_local", "PROVA")
+        self.theme_manager = ThemeManager(self.config.get("tema_visual", "noche"))
+        self.local_name = self.config.get("nombre_local", "PRÖVA México")
         self.waiter_pin = str(self.config.get("pin_meseros", ""))
         self.waiter_url = ""
         self.waiter_server = None
 
-        self.quick_index = {}
+        self.active_plate = 1
+        self._plate_table = None
+        self.current_category = None
         self._menu_snapshot = None
-        self._completer_just_used = False
+        self.category_buttons = {}
+        self.variant_buttons = {}
+        self.order_cards = {}
+        self.plate_buttons = {}
+        self.ticket_lines = []
 
-        self.setup_window()
-        self.init_ui()
+        self.setWindowTitle("PRÖVA México · Caja")
+        self.resize(1360, 820)
+        self.setMinimumSize(1180, 680)
+        self._build_ui()
         self.apply_stylesheet()
         self.reload_menu()
 
         self.orders_changed.connect(self._on_orders_changed)
         self.order_manager.add_listener(
             lambda event, table, info: self.orders_changed.emit(event, table or "", dict(info)))
-        self.refresh_table_list()
+        self.refresh_orders()
+        self.refresh_ticket()
+        self._setup_shortcuts()
 
         # Si el dueño edita menu_precios.xlsx con la app abierta, se recarga solo
         self.menu_timer = QTimer(self)
         self.menu_timer.timeout.connect(self.reload_menu)
         self.menu_timer.start(10_000)
+        # Reloj y minutos de espera de cada mesa
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._tick)
+        self.clock_timer.start(30_000)
+        self._update_clock()
 
         if self.order_manager.restored_count:
-            self.statusBar().showMessage(
+            QTimer.singleShot(500, lambda: self.toast.show_message(
                 f"Se recuperaron {self.order_manager.restored_count} pedido(s) abiertos "
-                f"de la sesion anterior.", 15_000)
-
-    def setup_window(self):
-        self.setWindowTitle("PROVA - Sistema de Pedidos")
-        self.setGeometry(100, 100, 1200, 820)
-        self.setMinimumSize(1100, 760)
-
-    def init_ui(self):
-        self.main_widget = QWidget()
-        self.setCentralWidget(self.main_widget)
-        self.main_layout = QHBoxLayout()
-        self.main_widget.setLayout(self.main_layout)
-        self.setup_left_panel()
-        self.setup_right_panel()
-        self.setup_status_bar()
-        self.setup_shortcuts()
+                f"de la sesión anterior.", "warning", 6000))
 
     @property
     def current_table(self):
         return self.order_manager.current_table
 
-    # ----------------------------------------------------------------
+    # ================================================================
+    #  Construccion de la interfaz
+    # ================================================================
+    def _build_ui(self):
+        central = QWidget()
+        central.setObjectName("central")
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_header())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(14, 14, 14, 14)
+        body.setSpacing(14)
+        body.addWidget(self._build_orders_panel())
+        body.addWidget(self._build_menu_panel(), 1)
+        body.addWidget(self._build_ticket_panel())
+        root.addLayout(body, 1)
+
+        self.toast = Toast(central)
+
+    def _load_logo(self):
+        for name in ("prova.png", "PROVA.png"):
+            path = os.path.join(app_dir(), name)
+            if os.path.exists(path):
+                pixmap = QPixmap(path)
+                if not pixmap.isNull():
+                    return pixmap
+        return None
+
+    def _build_header(self) -> QFrame:
+        header = QFrame()
+        header.setObjectName("header")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(18, 8, 18, 8)
+        layout.setSpacing(12)
+
+        logo = QLabel()
+        logo.setObjectName("logoBadge")
+        logo.setFixedSize(54, 54)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = self._load_logo()
+        if pixmap is not None:
+            logo.setPixmap(pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
+        else:
+            logo.setText("\U0001F336")
+        layout.addWidget(logo)
+
+        brand = QVBoxLayout()
+        brand.setSpacing(0)
+        brand.addWidget(make_label("PRÖVA", "brandTitle"))
+        brand.addWidget(make_label("México", "brandScript"))
+        layout.addLayout(brand)
+        layout.addSpacing(18)
+
+        self.jornada_label = make_label("", "headerInfo")
+        layout.addWidget(self.jornada_label)
+        layout.addStretch()
+
+        self.waiters_btn = make_button("\U0001F4F1  Meseros: iniciando...", "headerChip",
+                                       self.show_waiter_access,
+                                       "Dirección y PIN para los celulares de los meseros")
+        self.summary_btn = make_button("\U0001F4CA  Resumen del día", "headerChip", self.show_day_summary,
+                                       "Cierre de caja: efectivo, QR y productos vendidos")
+        self.theme_btn = make_button("", "headerChip", self.toggle_theme)
+        self.more_btn = make_button("⋯", "iconButton", tooltip="Más opciones")
+        more_menu = QMenu(self)
+        more_menu.addAction("\U0001F4BE  Exportar respaldo del día", lambda _=False: self.save_to_excel())
+        more_menu.addAction("\U0001F4C2  Abrir carpeta de ventas", lambda _=False: self.open_data_folder())
+        more_menu.addSeparator()
+        more_menu.addAction("\U0001F511  Cambiar PIN de meseros", lambda _=False: self.change_waiter_pin())
+        self.more_btn.setMenu(more_menu)
+        for widget in (self.waiters_btn, self.summary_btn, self.theme_btn, self.more_btn):
+            layout.addWidget(widget)
+        return header
+
+    def _build_orders_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel.setFixedWidth(310)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        top = QHBoxLayout()
+        top.addWidget(make_label("PEDIDOS", "panelTitle"))
+        top.addStretch()
+        self.pending_label = make_label("", "muted")
+        top.addWidget(self.pending_label)
+        layout.addLayout(top)
+
+        self.new_order_btn = make_button("＋  Nuevo pedido", "bigPrimary", self.add_pedido, "Ctrl+N")
+        layout.addWidget(self.new_order_btn)
+
+        cards = QWidget()
+        self.cards_layout = QVBoxLayout(cards)
+        self.cards_layout.setContentsMargins(0, 2, 6, 2)
+        self.cards_layout.setSpacing(8)
+        self.cards_layout.addStretch()
+        layout.addWidget(_scroll_area(cards), 1)
+
+        self.orders_empty = make_label(
+            "Todavía no hay pedidos.\nToca «Nuevo pedido» o espera a los meseros.", "emptyState", wrap=True)
+        self.orders_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.orders_empty)
+
+        self.clear_paid_btn = make_button("Quitar cobrados de la lista", "ghostButton", self.clear_paid_orders,
+                                          "Siguen guardados en el Excel del día")
+        layout.addWidget(self.clear_paid_btn)
+        return panel
+
+    def _build_menu_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(12)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        top.addWidget(make_label("MENÚ", "panelTitle"))
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("searchInput")
+        self.search_input.setPlaceholderText("\U0001F50D  Buscar platillo o bebida…     Ctrl+K")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(lambda _text: self.render_products())
+        self.search_input.returnPressed.connect(self._add_single_search_result)
+        top.addWidget(self.search_input, 1)
+        top.addWidget(make_label("Cantidad", "muted"))
+        self.qty_spin = QSpinBox()
+        self.qty_spin.setRange(1, 50)
+        self.qty_spin.setFixedWidth(84)
+        self.qty_spin.setToolTip("Unidades que agrega cada toque. Vuelve a 1 después de agregar.")
+        top.addWidget(self.qty_spin)
+        layout.addLayout(top)
+
+        self.menu_warning = make_label("", "menuWarning", wrap=True)
+        self.menu_warning.hide()
+        layout.addWidget(self.menu_warning)
+
+        chips = QWidget()
+        self.category_layout = FlowLayout(chips, spacing=8)
+        self.category_group = QButtonGroup(self)
+        layout.addWidget(chips)
+
+        products = QWidget()
+        self.products_layout = FlowLayout(products, spacing=MENU_SPACING)
+        self.products_scroll = _scroll_area(products)
+        self.products_scroll.viewport().installEventFilter(self)
+        self.product_cards = []
+        layout.addWidget(self.products_scroll, 1)
+
+        self.no_results = make_label("", "emptyState", wrap=True)
+        self.no_results.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_results.hide()
+        layout.addWidget(self.no_results)
+        return panel
+
+    def _build_ticket_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel.setFixedWidth(410)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(10)
+
+        # --- Sin pedido seleccionado ---
+        self.ticket_empty = QWidget()
+        empty = QVBoxLayout(self.ticket_empty)
+        empty.addStretch()
+        icon = make_label("\U0001F32E", "emptyIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty.addWidget(icon)
+        text = make_label("Selecciona un pedido de la izquierda\no crea uno nuevo", "emptyState", wrap=True)
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty.addWidget(text)
+        empty.addSpacing(8)
+        empty.addWidget(make_button("＋  Nuevo pedido", "primaryButton", self.add_pedido))
+        empty.addStretch()
+        layout.addWidget(self.ticket_empty, 1)
+
+        # --- Pedido ---
+        self.ticket_body = QWidget()
+        body = QVBoxLayout(self.ticket_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.ticket_number = make_label("", "ticketNumber")
+        head.addWidget(self.ticket_number)
+        self.ticket_name = make_label("", "ticketTitle")
+        self.ticket_name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        head.addWidget(self.ticket_name, 1)
+        self.rename_btn = make_button("✎", "iconButton", self.edit_table_name, "Renombrar pedido")
+        self.delete_btn = make_button("\U0001F5D1", "iconButton", self.delete_table, "Eliminar pedido")
+        head.addWidget(self.rename_btn)
+        head.addWidget(self.delete_btn)
+        body.addLayout(head)
+        self.ticket_meta = make_label("", "muted")
+        body.addWidget(self.ticket_meta)
+
+        type_row = QHBoxLayout()
+        type_row.setSpacing(8)
+        self.type_group = QButtonGroup(self)
+        self.type_buttons = {}
+        for value, text in ((ORDER_TYPE_LOCAL, "\U0001F37D  En el local"),
+                            (ORDER_TYPE_TAKEAWAY, "\U0001F6F5  Para llevar")):
+            button = make_button(text, "segment")
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, v=value: self.set_order_type(v))
+            self.type_group.addButton(button)
+            type_row.addWidget(button, 1)
+            self.type_buttons[value] = button
+        body.addLayout(type_row)
+
+        plate_row = QHBoxLayout()
+        plate_row.setSpacing(8)
+        plate_row.addWidget(make_label("PLATO", "muted"))
+        plate_bar = QWidget()
+        self.plate_layout = FlowLayout(plate_bar, spacing=6)
+        plate_row.addWidget(plate_bar, 1)
+        body.addLayout(plate_row)
+        self.plate_hint = make_label("", "hint", wrap=True)
+        body.addWidget(self.plate_hint)
+
+        lines = QWidget()
+        self.lines_layout = QVBoxLayout(lines)
+        self.lines_layout.setContentsMargins(0, 0, 6, 0)
+        self.lines_layout.setSpacing(4)
+        self.lines_layout.addStretch()
+        body.addWidget(_scroll_area(lines), 1)
+        self.lines_empty = make_label("Pedido vacío.\nToca un platillo del menú para agregarlo.",
+                                      "emptyState", wrap=True)
+        self.lines_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        body.addWidget(self.lines_empty)
+
+        self.paid_banner = make_label("", "paidBanner", wrap=True)
+        body.addWidget(self.paid_banner)
+
+        total_row = QHBoxLayout()
+        total_row.addWidget(make_label("TOTAL", "panelTitle"))
+        total_row.addStretch()
+        self.total_label = make_label(money(0), "totalAmount")
+        total_row.addWidget(self.total_label)
+        body.addLayout(total_row)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.kitchen_btn = make_button("\U0001F514  Comanda", "secondaryButton",
+                                       self.print_kitchen_ticket, "F8 · Imprime para cocina solo lo nuevo")
+        self.bill_btn = make_button("\U0001F9FE  Cuenta", "secondaryButton", self.print_customer_bill,
+                                    "Ctrl+P · Cuenta para el cliente")
+        self.ticket_more_btn = make_button("⋯", "secondaryButton", tooltip="Más acciones del pedido")
+        ticket_menu = QMenu(self)
+        ticket_menu.addAction("\U0001F501  Reimprimir comanda completa",
+                              lambda _=False: self.print_kitchen_ticket(reprint_all=True))
+        self.plates_action = ticket_menu.addAction("\U0001F37D  Repartir en platos…",
+                                                   lambda _=False: self.organize_plates())
+        ticket_menu.addSeparator()
+        ticket_menu.addAction("✎  Renombrar pedido", lambda _=False: self.edit_table_name())
+        ticket_menu.addAction("\U0001F5D1  Eliminar pedido", lambda _=False: self.delete_table())
+        self.ticket_more_btn.setMenu(ticket_menu)
+        actions.addWidget(self.kitchen_btn, 1)
+        actions.addWidget(self.bill_btn, 1)
+        actions.addWidget(self.ticket_more_btn)
+        body.addLayout(actions)
+
+        self.pay_btn = make_button("Cobrar", "payButton", self.mark_as_paid, "F9")
+        body.addWidget(self.pay_btn)
+        self.remove_paid_btn = make_button("Quitar de la lista", "ghostButton", self.delete_table)
+        body.addWidget(self.remove_paid_btn)
+
+        layout.addWidget(self.ticket_body, 1)
+        return panel
+
+    def _setup_shortcuts(self):
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.add_pedido)
+        QShortcut(QKeySequence("F9"), self, activated=self.mark_as_paid)
+        QShortcut(QKeySequence("F8"), self, activated=self.print_kitchen_ticket)
+        QShortcut(QKeySequence("Ctrl+P"), self, activated=self.print_customer_bill)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._focus_search)
+        escape = QShortcut(QKeySequence("Escape"), self.search_input, activated=self.search_input.clear)
+        escape.setContext(Qt.ShortcutContext.WidgetShortcut)
+
+    def _focus_search(self):
+        self.search_input.setFocus()
+        self.search_input.selectAll()
+
+    # ================================================================
+    #  Tema y reloj
+    # ================================================================
+    def apply_stylesheet(self):
+        app = QApplication.instance()
+        app.setStyleSheet(self.theme_manager.get_stylesheet())
+        theme = self.theme_manager.get_current_theme()
+        palette = app.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(theme["bg"]))
+        palette.setColor(QPalette.ColorRole.Base, QColor(theme["surface3"]))
+        palette.setColor(QPalette.ColorRole.Text, QColor(theme["text"]))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(theme["text"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(theme["primary"]))
+        app.setPalette(palette)
+        other = "dia" if self.theme_manager.is_dark else "noche"
+        icon = "☀" if other == "dia" else "\U0001F319"
+        self.theme_btn.setText(f"{icon}  {THEME_NAMES[other]}")
+        self.theme_btn.setToolTip(f"Cambiar al tema {THEME_NAMES[other]}")
+
+    def toggle_theme(self):
+        self.theme_manager.toggle_theme()
+        self.apply_stylesheet()
+        try:
+            save_config_value("tema_visual", self.theme_manager.current_theme, self.order_manager.root)
+        except OSError:
+            pass
+
+    def _update_clock(self):
+        now = datetime.datetime.now()
+        self.jornada_label.setText(f"Jornada {self.order_manager.today():%d/%m}  ·  {now:%H:%M}")
+
+    def _tick(self):
+        self._update_clock()
+        self.refresh_orders()
+        self._update_ticket_meta()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.toast.isVisible():
+            self.toast.reposition()
+
+    # ================================================================
     #  Servidor de meseros
-    # ----------------------------------------------------------------
+    # ================================================================
     def start_waiter_server(self):
         try:
             from server import WaiterServer, create_app, get_local_ip
 
-            app = create_app(self.order_manager, self.menu_data, lambda: self.waiter_pin)
+            app = create_app(self.order_manager, self.menu_data, lambda: self.waiter_pin,
+                             int(self.config.get("numero_mesas", 8)))
             self.waiter_server = WaiterServer(app)
             port = self.waiter_server.start(int(self.config.get("puerto_meseros", 5000)))
             self.waiter_url = f"http://{get_local_ip()}:{port}"
-            self.server_label.setText(f"Meseros: {self.waiter_url}")
-            self.setWindowTitle(f"PROVA - Sistema de Pedidos  |  Meseros: {self.waiter_url}")
+            self.waiters_btn.setText(f"\U0001F4F1  Meseros: {self.waiter_url.replace('http://', '')}")
+            set_prop(self.waiters_btn, "status", "ok")
         except Exception as e:
-            self.server_label.setText("Servidor de meseros no disponible")
-            self.statusBar().showMessage(f"No se pudo iniciar el servidor de meseros: {e}", 20_000)
+            self.waiters_btn.setText("\U0001F4F1  Meseros sin conexión")
+            set_prop(self.waiters_btn, "status", "error")
+            self.toast.show_message(f"No se pudo iniciar el servidor de meseros: {e}", "error", 8000)
 
     def show_waiter_access(self):
         if not self.waiter_url:
-            QMessageBox.warning(self, "Meseros", "El servidor de meseros no esta activo.")
+            QMessageBox.warning(self, "Meseros", "El servidor de meseros no está activo.")
             return
+        accent = self.theme_manager.get_current_theme()["accent"]
         box = QMessageBox(self)
         box.setWindowTitle("Acceso de meseros")
         box.setText(
-            f"<p>En el celular, conectado al mismo WiFi, abre:</p>"
-            f"<h2>{html.escape(self.waiter_url)}</h2>"
-            f"<p>PIN de meseros: <b style='font-size:20px'>{html.escape(self.waiter_pin)}</b></p>"
-            f"<p style='color:gray'>Si no abre, permite la app en el Firewall de Windows "
-            f"(redes privadas).</p>"
+            f"<p>En el celular, conectado al WiFi del local, abre:</p>"
+            f"<h2 style='color:{accent}'>{html.escape(self.waiter_url)}</h2>"
+            f"<p>PIN de meseros: <b style='font-size:22px'>{html.escape(self.waiter_pin)}</b></p>"
+            f"<p>Si no abre, permite la app en el Firewall de Windows (redes privadas).</p>"
         )
         change = box.addButton("Cambiar PIN", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Close)
+        box.addButton("Cerrar", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is change:
             self.change_waiter_pin()
 
     def change_waiter_pin(self):
-        pin, ok = QInputDialog.getText(self, "Cambiar PIN", "Nuevo PIN (4 a 8 digitos):",
+        pin, ok = QInputDialog.getText(self, "Cambiar PIN", "Nuevo PIN (4 a 8 dígitos):",
                                        text=self.waiter_pin)
         pin = (pin or "").strip()
         if not ok:
             return
         if not pin.isdigit() or not 4 <= len(pin) <= 8:
-            QMessageBox.warning(self, "PIN invalido", "El PIN debe tener entre 4 y 8 digitos.")
+            QMessageBox.warning(self, "PIN inválido", "El PIN debe tener entre 4 y 8 dígitos.")
             return
         self.waiter_pin = pin
         save_config_value("pin_meseros", pin, self.order_manager.root)
-        self.statusBar().showMessage("PIN actualizado. Los meseros deberan ingresarlo de nuevo.", 8000)
+        self.toast.show_message("PIN actualizado. Los meseros deben ingresarlo de nuevo.", "success")
 
-    # ----------------------------------------------------------------
-    #  Confirmacion al cerrar
-    # ----------------------------------------------------------------
+    # ================================================================
+    #  Cierre de la app
+    # ================================================================
     def closeEvent(self, event):
         open_tables = self.order_manager.pending_tables()
         if open_tables:
             names = ", ".join(open_tables)
             reply = QMessageBox.question(
                 self,
-                "Cerrar aplicacion",
+                "Cerrar PRÖVA",
                 f"Hay {len(open_tables)} pedido(s) SIN cobrar:\n{names}\n\n"
-                f"Quedan guardados y apareceran al volver a abrir la app.\n\n"
-                f"\u00bfDeseas cerrar?",
+                f"Quedan guardados y aparecerán al volver a abrir la app.\n\n"
+                f"¿Deseas cerrar?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.No:
@@ -156,278 +515,13 @@ class ProvaRestaurant(QMainWindow):
             self.waiter_server.stop()
         event.accept()
 
-    # ----------------------------------------------------------------
-    #  Panel izquierdo
-    # ----------------------------------------------------------------
-    def setup_left_panel(self):
-        self.left_panel = QFrame()
-        self.left_panel.setObjectName("leftPanel")
-        self.left_panel.setMaximumWidth(360)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-        self.left_panel.setLayout(layout)
-
-        self.setup_logo(layout)
-
-        title = QLabel("PROVA")
-        title.setFont(QFont("Arial", 28, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setObjectName("appTitle")
-        layout.addWidget(title)
-
-        subtitle = QLabel("Sistema de Pedidos")
-        subtitle.setFont(QFont("Arial", 12))
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setObjectName("appSubtitle")
-        layout.addWidget(subtitle)
-
-        self.tables_label = QLabel("Mesas/Clientes:")
-        layout.addWidget(self.tables_label)
-        self.table_list = QListWidget()
-        self.table_list.setObjectName("tableList")
-        self.table_list.setFont(QFont("Arial", 11))
-        self.table_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.table_list.setWordWrap(True)
-        self.table_list.currentItemChanged.connect(self._on_current_item_changed)
-        layout.addWidget(self.table_list)
-
-        self.setup_left_panel_buttons(layout)
-        self.main_layout.addWidget(self.left_panel)
-
-    def setup_logo(self, layout):
-        self.local_image_label = QLabel()
-        self.local_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.local_image_label.setFixedSize(300, 160)
-
-        pixmap = QPixmap()
-        for name in ("prova.png", "PROVA.png"):
-            path = os.path.join(app_dir(), name)
-            if os.path.exists(path):
-                pixmap = QPixmap(path)
-                break
-
-        if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self.local_image_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.local_image_label.setPixmap(scaled)
-        else:
-            self.local_image_label.setText("Logo del Local\n(prova.png)")
-            self.local_image_label.setStyleSheet("""
-                background-color: #F0F0F0;
-                border: 2px dashed #AAAAAA;
-                color: #666666;
-                font-weight: bold;
-            """)
-        layout.addWidget(self.local_image_label)
-
-    def setup_left_panel_buttons(self, layout):
-        btn_layout = QGridLayout()
-        btn_layout.setSpacing(10)
-
-        self.add_table_btn    = self.create_fancy_button("Nuevo Pedido",  "primary",   self.add_pedido)
-        self.edit_table_btn   = self.create_fancy_button("Editar",        "secondary", self.edit_table_name)
-        self.delete_table_btn = self.create_fancy_button("Eliminar",      "danger",    self.delete_table)
-        self.summary_btn      = self.create_fancy_button("Resumen del dia", "success", self.show_day_summary)
-        self.theme_toggle_btn = self.create_fancy_button("Cambiar Tema",  "accent",    self.toggle_theme)
-        self.add_table_btn.setToolTip("Ctrl+N")
-
-        btn_layout.addWidget(self.add_table_btn,    0, 0)
-        btn_layout.addWidget(self.edit_table_btn,   0, 1)
-        btn_layout.addWidget(self.delete_table_btn, 1, 0)
-        btn_layout.addWidget(self.theme_toggle_btn, 1, 1)
-        btn_layout.addWidget(self.summary_btn,      2, 0, 1, 2)
-        layout.addLayout(btn_layout)
-
-    # ----------------------------------------------------------------
-    #  Panel derecho
-    # ----------------------------------------------------------------
-    def setup_right_panel(self):
-        self.right_panel = QFrame()
-        self.right_panel.setObjectName("rightPanel")
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(12)
-        self.right_panel.setLayout(layout)
-
-        self.current_order_header = QLabel("Pedido Actual")
-        self.current_order_header.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        self.current_order_header.setObjectName("orderHeader")
-        layout.addWidget(self.current_order_header)
-
-        self.table_info = QLabel(NO_TABLE_TEXT)
-        self.table_info.setFont(QFont("Arial", 12))
-        self.table_info.setObjectName("tableInfo")
-        layout.addWidget(self.table_info)
-
-        self.menu_warning = QLabel()
-        self.menu_warning.setObjectName("menuWarning")
-        self.menu_warning.setWordWrap(True)
-        self.menu_warning.hide()
-        layout.addWidget(self.menu_warning)
-
-        self.setup_menu_selectors(layout)
-        self.setup_quick_search(layout)
-        self.setup_action_buttons(layout)
-
-        self.order_display = QTextBrowser()
-        self.order_display.setObjectName("orderDisplay")
-        self.order_display.setFont(QFont("Arial", 12))
-        self.order_display.setOpenLinks(False)
-        layout.addWidget(self.order_display, 1)
-
-        bottom = QHBoxLayout()
-        self.export_btn = self.create_fancy_button("Exportar respaldo del dia", "accent", self.save_to_excel)
-        self.open_folder_btn = self.create_fancy_button("Abrir carpeta de ventas", "secondary", self.open_data_folder)
-        bottom.addWidget(self.export_btn)
-        bottom.addWidget(self.open_folder_btn)
-        layout.addLayout(bottom)
-
-        self.main_layout.addWidget(self.right_panel)
-
-    def setup_status_bar(self):
-        self.server_label = QLabel("Iniciando servidor de meseros...")
-        self.waiter_access_btn = QPushButton("Acceso meseros / PIN")
-        self.waiter_access_btn.setObjectName("secondaryButton")
-        self.waiter_access_btn.clicked.connect(self.show_waiter_access)
-        self.statusBar().addPermanentWidget(self.server_label)
-        self.statusBar().addPermanentWidget(self.waiter_access_btn)
-
-    def setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.add_pedido)
-        QShortcut(QKeySequence("F9"), self, activated=self.mark_as_paid)
-        QShortcut(QKeySequence("Ctrl+P"), self, activated=self.print_customer_bill)
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=lambda: self.search_input.setFocus())
-
-    # ----------------------------------------------------------------
-    #  Selectores de menu
-    # ----------------------------------------------------------------
-    def setup_menu_selectors(self, layout):
-        form_layout = QGridLayout()
-        form_layout.setHorizontalSpacing(12)
-        form_layout.setVerticalSpacing(8)
-
-        def label(text):
-            lbl = QLabel(text)
-            lbl.setFont(QFont("Arial", 12))
-            return lbl
-
-        self.category_combo = QComboBox()
-        self.category_combo.setObjectName("categoryCombo")
-        self.category_combo.currentIndexChanged.connect(self.update_dishes)
-        form_layout.addWidget(label("Categoria:"), 0, 0)
-        form_layout.addWidget(self.category_combo, 0, 1)
-
-        self.dish_combo = QComboBox()
-        self.dish_combo.setObjectName("dishCombo")
-        self.dish_combo.currentIndexChanged.connect(self.update_variants)
-        form_layout.addWidget(label("Platillo:"), 0, 2)
-        form_layout.addWidget(self.dish_combo, 0, 3)
-
-        self.variant_combo = QComboBox()
-        self.variant_combo.setObjectName("variantCombo")
-        form_layout.addWidget(label("Variante:"), 1, 0)
-        form_layout.addWidget(self.variant_combo, 1, 1)
-
-        self.qty_spin = QSpinBox()
-        self.qty_spin.setRange(1, 50)
-        # Plato al que va lo que se agrega: cocina arma cada plato por separado
-        self.plate_combo = QComboBox()
-        self.plate_combo.setMinimumWidth(130)
-        self.plate_combo.setToolTip("Plato donde cocina sirve lo que agregas.\n"
-                                    "Las bebidas y jugos siempre van sin plato.")
-        self._plate_combo_table = None
-        qty_plate = QHBoxLayout()
-        qty_plate.setSpacing(12)
-        qty_plate.addWidget(self.qty_spin, 1)
-        qty_plate.addWidget(label("Plato:"))
-        qty_plate.addWidget(self.plate_combo, 2)
-        form_layout.addWidget(label("Cantidad:"), 1, 2)
-        form_layout.addLayout(qty_plate, 1, 3)
-
-        self.note_input = QLineEdit()
-        self.note_input.setMaxLength(120)
-        self.note_input.setPlaceholderText("Nota para cocina (opcional): sin cebolla, bien cocido...")
-        self.note_input.returnPressed.connect(self.add_order)
-        form_layout.addWidget(label("Nota:"), 2, 0)
-        form_layout.addWidget(self.note_input, 2, 1)
-
-        self.order_type_combo = QComboBox()
-        self.order_type_combo.addItems(ORDER_TYPES)
-        self.order_type_combo.setObjectName("orderTypeCombo")
-        self.order_type_combo.setEnabled(False)
-        self.order_type_combo.activated.connect(self.set_order_type)
-        form_layout.addWidget(label("Tipo de Consumo:"), 2, 2)
-        form_layout.addWidget(self.order_type_combo, 2, 3)
-
-        form_layout.setColumnStretch(1, 1)
-        form_layout.setColumnStretch(3, 1)
-        layout.addLayout(form_layout)
-
-    def setup_action_buttons(self, layout):
-        action_layout = QHBoxLayout()
-        action_layout.setSpacing(12)
-
-        self.add_item_btn    = self.create_fancy_button("Agregar",  "success",   self.add_order)
-        self.remove_item_btn = self.create_fancy_button("Quitar",   "warning",   self.delete_platillo)
-        self.plates_btn      = self.create_fancy_button("Platos",   "accent",    self.organize_plates)
-        self.plates_btn.setToolTip("Repartir los platillos del pedido en platos para cocina")
-        self.pay_btn         = self.create_fancy_button("Cobrar (F9)", "primary", self.mark_as_paid)
-        self.print_btn       = self.create_fancy_button("Imprimir", "secondary", lambda: None)
-
-        print_menu = QMenu(self)
-        print_menu.addAction("Comanda para cocina (solo lo nuevo)", self.print_kitchen_ticket)
-        print_menu.addAction("Comanda para cocina (todo el pedido)",
-                             lambda: self.print_kitchen_ticket(reprint_all=True))
-        print_menu.addAction("Cuenta para el cliente   Ctrl+P", self.print_customer_bill)
-        self.print_btn.setMenu(print_menu)
-
-        action_layout.addWidget(self.add_item_btn)
-        action_layout.addWidget(self.remove_item_btn)
-        action_layout.addWidget(self.plates_btn)
-        action_layout.addWidget(self.pay_btn)
-        action_layout.addWidget(self.print_btn)
-        layout.addLayout(action_layout)
-
-    def create_fancy_button(self, text, color_type, callback):
-        btn = QPushButton(text)
-        btn.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-        btn.setObjectName(f"{color_type}Button")
-        btn.clicked.connect(lambda _checked=False: callback())
-        return btn
-
-    # ----------------------------------------------------------------
-    #  Tema
-    # ----------------------------------------------------------------
-    def apply_stylesheet(self):
-        self.setStyleSheet(self.theme_manager.get_stylesheet())
-        palette = self.palette()
-        theme = self.theme_manager.get_current_theme()
-        palette.setColor(QPalette.ColorRole.Window, QColor(theme["background"]))
-        self.setPalette(palette)
-
-    def toggle_theme(self):
-        self.theme_manager.toggle_theme()
-        self.apply_stylesheet()
-        self.refresh_table_list()
-        self.update_order_display()
-        try:
-            save_config_value("tema", self.theme_manager.current_theme, self.order_manager.root)
-        except OSError:
-            pass
-
-    # ----------------------------------------------------------------
+    # ================================================================
     #  Menu
-    # ----------------------------------------------------------------
+    # ================================================================
     def reload_menu(self):
         menu = self.menu_data.get_menu_prices()
         if self.menu_data.last_error:
-            self.menu_warning.setText(f"{self.menu_data.last_error}\n"
+            self.menu_warning.setText(f"{self.menu_data.last_error}. "
                                       f"Coloca menu_precios.xlsx junto al programa.")
             self.menu_warning.show()
         else:
@@ -436,160 +530,410 @@ class ProvaRestaurant(QMainWindow):
             return
         self._menu_snapshot = menu
 
-        previous = (self.category_combo.currentText(), self.dish_combo.currentText(),
-                    self.variant_combo.currentText())
-        self.category_combo.blockSignals(True)
-        self.category_combo.clear()
-        self.category_combo.addItems(menu.keys())
-        if previous[0] in menu:
-            self.category_combo.setCurrentText(previous[0])
-        self.category_combo.blockSignals(False)
-        self.update_dishes()
-        if previous[1]:
-            self.dish_combo.setCurrentText(previous[1])
-        if previous[2]:
-            self.variant_combo.setCurrentText(previous[2])
+        clear_layout(self.category_layout)
+        for button in self.category_group.buttons():
+            self.category_group.removeButton(button)
+        self.category_buttons = {}
+        if self.current_category not in menu:
+            self.current_category = next(iter(menu), None)
+        for category in menu:
+            button = make_button(f"{category_icon(category)}  {category}", "chip")
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, c=category: self.set_category(c))
+            self.category_group.addButton(button)
+            self.category_layout.addWidget(button)
+            self.category_buttons[category] = button
+        self.render_products()
 
-        self._build_quick_index()
-        self.completer.model().setStringList(list(self.quick_index.keys()))
-        has_menu = bool(menu)
-        for widget in (self.add_item_btn, self.search_add_btn):
-            widget.setEnabled(has_menu)
+    def set_category(self, category: str):
+        self.current_category = category
+        if self.search_input.text():
+            self.search_input.clear()  # vuelve a dibujar el menu
+        else:
+            self.render_products()
+        self.products_scroll.verticalScrollBar().setValue(0)
 
-    def update_dishes(self):
+    def eventFilter(self, obj, event):
+        if obj is self.products_scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._fit_product_cards()
+        return super().eventFilter(obj, event)
+
+    def _fit_product_cards(self):
+        """Tarjetas del menu que llenan el ancho: tantas columnas como entren."""
+        width = self.products_scroll.viewport().width() - 2
+        columns = max(1, (width + MENU_SPACING) // (PRODUCT_CARD_MIN_WIDTH + MENU_SPACING))
+        card_width = max(PRODUCT_CARD_MIN_WIDTH, (width - MENU_SPACING * (columns - 1)) // columns)
+        for card in self.product_cards:
+            card.setFixedWidth(card_width)
+
+    def render_products(self):
         menu = self.menu_data.get_menu_prices()
-        self.dish_combo.blockSignals(True)
-        self.dish_combo.clear()
-        self.dish_combo.addItems(menu.get(self.category_combo.currentText(), {}).keys())
-        self.dish_combo.blockSignals(False)
-        self.update_variants()
+        tokens = normalize_text(self.search_input.text()).split()
+        clear_layout(self.products_layout)
+        self.variant_buttons = {}
+        self.product_cards = []
+        shown = 0
+        for category, products in menu.items():
+            if not tokens and category != self.current_category:
+                continue
+            for product, variants in products.items():
+                if tokens:
+                    variants = {
+                        variant: price for variant, price in variants.items()
+                        if all(t in normalize_text(f"{product} {variant} {category}") for t in tokens)
+                    }
+                    if not variants:
+                        continue
+                card = ProductCard(category, product, variants, product_icon(product, category),
+                                   self.add_product)
+                self.products_layout.addWidget(card)
+                self.product_cards.append(card)
+                for variant, button in card.buttons.items():
+                    self.variant_buttons[(category, product, variant)] = button
+                shown += 1
+        self._fit_product_cards()
+        for category, button in self.category_buttons.items():
+            button.setChecked(not tokens and category == self.current_category)
+        if shown:
+            self.no_results.hide()
+        else:
+            self.no_results.setText("Sin resultados para esa búsqueda." if tokens else "Menú no disponible.")
+            self.no_results.show()
 
-    def update_variants(self):
-        menu = self.menu_data.get_menu_prices()
-        variants = menu.get(self.category_combo.currentText(), {}).get(self.dish_combo.currentText(), {})
-        self.variant_combo.clear()
-        for variant, price in variants.items():
-            self.variant_combo.addItem(f"{variant}  -  {money(price)}", variant)
+    def _add_single_search_result(self):
+        if not self.search_input.text().strip():
+            return
+        if len(self.variant_buttons) == 1:
+            (category, product, variant), button = next(iter(self.variant_buttons.items()))
+            if self.add_product(category, product, variant, button):
+                self.search_input.clear()
+        elif self.variant_buttons:
+            self.toast.show_message(f"Hay {len(self.variant_buttons)} opciones: toca la que quieras.", "info")
 
-    def set_order_type(self, _index=None):
+    def _flash(self, button):
+        def restore():
+            try:
+                set_prop(button, "flash", False)
+            except RuntimeError:
+                pass  # el boton ya no existe (el menu se volvio a dibujar)
+        set_prop(button, "flash", True)
+        QTimer.singleShot(350, restore)
+
+    def add_product(self, category: str, dish: str, variant: str, button=None) -> bool:
+        """Un toque en el menu: agrega al pedido actual (o pide crear uno)."""
+        table = self.current_table
+        if not table:
+            if not self.add_pedido():
+                return False
+            table = self.current_table
+        if self.order_manager.is_paid(table):
+            self.toast.show_message(f"«{table}» ya fue cobrado. Crea un pedido nuevo.", "error")
+            return False
+        price = self.menu_data.get_price(category, dish, variant)
+        if price is None:
+            self.toast.show_message(f"{dish} ({variant}) ya no está en el menú.", "error")
+            return False
+        qty = self.qty_spin.value()
+        plate = self.active_plate if self.order_manager.plate_applies(category) else 0
+        try:
+            self.order_manager.add_item(table, category, dish, variant, price, qty=qty, plate=plate)
+        except (KeyError, ValueError, PermissionError) as e:
+            self.toast.show_message(str(e), "error")
+            return False
+        self.qty_spin.setValue(1)
+        if button is not None:
+            self._flash(button)
+        destination = f"  →  {plate_label(plate)}" if plate else ""
+        self.toast.show_message(f"+ {qty}× {dish} ({variant}){destination}", "success", 1500)
+        return True
+
+    # ================================================================
+    #  Pedidos
+    # ================================================================
+    def _on_orders_changed(self, event: str, table: str, info: dict):
+        if event == "renamed" and info.get("old_name") == self._plate_table:
+            self._plate_table = table
+        self.refresh_orders()
+        self.refresh_ticket()
+        if info.get("source") == "mesero":
+            if event == "created":
+                self.toast.show_message(f"\U0001F4F1 Un mesero abrió «{table}»", "info", 4000)
+            elif event == "items_added":
+                self.toast.show_message(
+                    f"\U0001F4F1 Mesero: +{info.get('count', 0)} platillo(s) en «{table}»",
+                    "warning", 5000)
+                QApplication.beep()
+
+    def refresh_orders(self):
+        clear_layout(self.cards_layout)
+        self.order_cards = {}
+        names = self.order_manager.get_all_tables()
+        orders = [(name, self.order_manager.get_order(name)) for name in names]
+        orders = [(name, order) for name, order in orders if order]
+        orders.sort(key=lambda item: item[1]["paid"])  # primero lo que falta cobrar
+        pending = paid = 0
+        for name, order in orders:
+            card = OrderCard(name, order, _minutes_since(order.get("created_at")),
+                             name == self.current_table)
+            card.selected_name.connect(self.select_order)
+            self.cards_layout.addWidget(card)
+            self.order_cards[name] = card
+            if order["paid"]:
+                paid += 1
+            elif order["items"]:
+                pending += 1
+        self.cards_layout.addStretch()
+        self.orders_empty.setVisible(not orders)
+        self.pending_label.setText(f"{pending} por cobrar" if pending else "")
+        self.clear_paid_btn.setVisible(paid > 0)
+        self.clear_paid_btn.setText(f"Quitar cobrados de la lista ({paid})")
+        if self.current_table and self.current_table not in names:
+            self.order_manager.set_current_table(None)
+
+    def select_order(self, name: str):
+        self.order_manager.set_current_table(name)
+        self.refresh_orders()
+        self.refresh_ticket()
+
+    def _update_ticket_meta(self):
+        table = self.current_table
+        order = self.order_manager.get_order(table) if table else None
+        if order is None:
+            return
+        parts = []
+        if order["paid"]:
+            parts.append(f"Cobrado a las {(order.get('paid_at') or '')[11:16]}")
+        else:
+            opened = (order.get("created_at") or "")[11:16]
+            parts.append(f"Abierto {opened}  ·  hace {format_minutes(_minutes_since(order.get('created_at')))}")
+        if order.get("created_by") == "mesero":
+            parts.append("\U0001F4F1 mesero")
+        delivery = order.get("delivery")
+        if delivery and order["order_type"] == ORDER_TYPE_TAKEAWAY:
+            parts.append(f"\U0001F6F5 moto {money(delivery['moto_cost'])}")
+        self.ticket_meta.setText("  ·  ".join(parts))
+
+    def refresh_ticket(self):
+        table = self.current_table
+        order = self.order_manager.get_order(table) if table else None
+        self.ticket_empty.setVisible(order is None)
+        self.ticket_body.setVisible(order is not None)
+        if order is None:
+            self.ticket_lines = []
+            self._plate_table = None
+            return
+
+        paid = order["paid"]
+        self.ticket_number.setText(order["number"])
+        self.ticket_name.setText(table)
+        self._update_ticket_meta()
+        for value, button in self.type_buttons.items():
+            button.setChecked(order["order_type"] == value)
+            button.setEnabled(not paid)
+        self.rename_btn.setEnabled(not paid)
+        self.plates_action.setEnabled(not paid)
+        self._refresh_plate_bar(table, order)
+
+        clear_layout(self.lines_layout)
+        self.ticket_lines = []
+        lines = self.order_manager.get_order_lines(table)
+        indexed = [dict(line, index=i) for i, line in enumerate(lines)]
+        with_plates = any(line["plate"] for line in lines)
+        for plate, plate_lines in group_lines_by_plate(indexed):
+            if with_plates:
+                subtotal = sum(line["subtotal"] for line in plate_lines)
+                title = f"\U0001F37D  {plate_label(plate).upper()}" if plate else "SIN PLATO  ·  BEBIDAS"
+                self.lines_layout.addWidget(make_label(f"{title}   ·   {money(subtotal)}", "plateHeader"))
+            for line in plate_lines:
+                widget = TicketLine(line, line["index"], not paid, self.change_line_qty, self.show_line_menu)
+                self.lines_layout.addWidget(widget)
+                self.ticket_lines.append(widget)
+        self.lines_layout.addStretch()
+        self.lines_empty.setVisible(not lines)
+
+        total = sum(line["subtotal"] for line in lines)
+        pending_kitchen = sum(line["pending_kitchen"] for line in lines)
+        self.total_label.setText(money(total))
+        self.kitchen_btn.setText(f"\U0001F514  Comanda ({pending_kitchen})" if pending_kitchen
+                                 else "\U0001F514  Comanda")
+        set_prop(self.kitchen_btn, "attention", bool(pending_kitchen) and not paid)
+        self.kitchen_btn.setEnabled(bool(lines))
+        self.bill_btn.setEnabled(bool(lines))
+        self.pay_btn.setVisible(not paid)
+        self.pay_btn.setEnabled(bool(lines))
+        self.pay_btn.setText(f"\U0001F4B5  Cobrar   {money(total)}")
+        self.remove_paid_btn.setVisible(paid)
+
+        if paid:
+            payment = order["payment"]
+            text = f"✔  COBRADO  ·  {payment['method']}  ·  {money(payment['total'])}"
+            if payment.get("change"):
+                text += f"\nCambio {money(payment['change'])} en {payment['change_method']}"
+            self.paid_banner.setText(text)
+        self.paid_banner.setVisible(paid)
+
+    # ----------------------------------------------------------------
+    #  Platos
+    # ----------------------------------------------------------------
+    def _refresh_plate_bar(self, table: str, order: dict):
+        used = self.order_manager.used_plates(table)
+        if table != self._plate_table:
+            self._plate_table = table
+            self.active_plate = used[-1] if used else 1
+        clear_layout(self.plate_layout)
+        self.plate_buttons = {}
+        plates = sorted(set(used) | ({self.active_plate} - {0}))
+        next_plate = min((plates[-1] if plates else 0) + 1, MAX_PLATES)
+        options = [(plate, str(plate), f"Agregar al {plate_label(plate)}") for plate in plates]
+        if next_plate not in plates:
+            options.append((next_plate, "＋", f"Empezar el {plate_label(next_plate)}"))
+        options.append((0, "Sin plato", "Para compartir; bebidas y jugos siempre van aquí"))
+        for plate, text, tooltip in options:
+            button = make_button(text, "plateChip", tooltip=tooltip)
+            button.setCheckable(True)
+            button.setChecked(plate == self.active_plate)
+            button.setEnabled(not order["paid"])
+            if text == "＋":
+                button.setProperty("newPlate", True)
+            button.clicked.connect(lambda _c=False, p=plate: self.set_active_plate(p))
+            self.plate_layout.addWidget(button)
+            self.plate_buttons[plate] = button
+        if self.active_plate:
+            self.plate_hint.setText(f"Lo que toques en el menú va al {plate_label(self.active_plate)}. "
+                                    f"Bebidas y jugos van aparte.")
+        else:
+            self.plate_hint.setText("Lo que toques en el menú va sin plato (para compartir).")
+
+    def set_active_plate(self, plate: int):
+        self.active_plate = plate
+        table = self.current_table
+        order = self.order_manager.get_order(table) if table else None
+        if order is not None:
+            self._refresh_plate_bar(table, order)
+
+    def organize_plates(self):
+        table = self._require_open_table("No se pueden cambiar los platos.")
+        if not table:
+            return
+        if not self.order_manager.get_items(table):
+            self.toast.show_message("Primero agrega platillos al pedido.", "warning")
+            return
+        PlateDialog(self.order_manager, table, self).exec()
+
+    # ----------------------------------------------------------------
+    #  Lineas del ticket
+    # ----------------------------------------------------------------
+    def _line(self, index: int):
+        lines = self.order_manager.get_order_lines(self.current_table) if self.current_table else []
+        return lines[index] if 0 <= index < len(lines) else None
+
+    def change_line_qty(self, index: int, delta: int):
         table = self.current_table
         if not table:
             return
-        order_type = self.order_type_combo.currentText()
         try:
-            self.order_manager.set_order_type(table, order_type)
-        except PermissionError as e:
-            QMessageBox.warning(self, "Pedido pagado", str(e))
-            self.order_type_combo.setCurrentText(self.order_manager.get_order_type(table))
-
-    # ----------------------------------------------------------------
-    #  Lista de pedidos
-    # ----------------------------------------------------------------
-    def _on_orders_changed(self, event: str, table: str, info: dict):
-        if event == "renamed" and info.get("old_name") == self.current_table:
-            self.order_manager.set_current_table(table)
-        if event == "deleted" and table == self.current_table:
-            self.order_manager.set_current_table(None)
-        self.refresh_table_list()
-        self.update_order_display()
-        if info.get("source") == "mesero":
-            if event == "created":
-                self.statusBar().showMessage(f"Un mesero creo el pedido '{table}'", 10_000)
-            elif event == "items_added":
-                self.statusBar().showMessage(
-                    f"Un mesero agrego {info.get('count', 0)} platillo(s) a '{table}'", 10_000)
-                QApplication.beep()
-
-    def refresh_table_list(self):
-        theme = self.theme_manager.get_current_theme()
-        tables = self.order_manager.get_all_tables()
-        self.table_list.blockSignals(True)
-        self.table_list.clear()
-        selected_item = None
-        pending = 0
-        for name in tables:
-            order = self.order_manager.get_order(name)
-            if order is None:
-                continue
-            total = sum(i["price"] for i in order["items"])
-            icon = "\U0001F6F5" if order["order_type"] == ORDER_TYPE_TAKEAWAY else "\U0001F37D"
-            title = f"{order['number']}  {icon} {name}"
-            if order["paid"]:
-                status = f"✔ PAGADO {money(total)}"
+            if delta > 0:
+                self.order_manager.add_to_line(table, index, delta)
             else:
-                status = f"{len(order['items'])} items - {money(total)}"
-                kitchen = sum(1 for i in order["items"] if not i.get("kitchen_sent"))
-                if kitchen:
-                    # Campana: platillos que aun no salieron en una comanda de cocina
-                    title += f"   \U0001F514{kitchen}"
-            item = QListWidgetItem(f"{title}\n     {status}")
-            # Con hoja de estilos Qt calcula la altura de una sola linea; se fija para dos
-            item.setSizeHint(QSize(0, 2 * self.table_list.fontMetrics().lineSpacing() + 34))
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setToolTip(f"{order['number']} - {name}\n{order['order_type']}\n{status}")
-            if order["paid"]:
-                # La hoja de estilos ignora el color de fondo por item; se marca con el texto
-                font = item.font()
-                font.setItalic(True)
-                item.setFont(font)
-                item.setForeground(QColor(theme["success"]))
-            elif order["items"]:
-                pending += 1
-            self.table_list.addItem(item)
-            if name == self.current_table:
-                selected_item = item
-        if selected_item is not None:
-            self.table_list.setCurrentItem(selected_item)
-        elif self.current_table not in tables:
-            self.order_manager.set_current_table(None)
-        self.table_list.blockSignals(False)
-        self.tables_label.setText(f"Mesas/Clientes ({pending} por cobrar):")
+                self.order_manager.remove_line(table, index, -delta)
+        except (KeyError, ValueError, PermissionError) as e:
+            self.toast.show_message(str(e), "error")
 
-    def _on_current_item_changed(self, current, _previous):
-        if current is None:
+    def show_line_menu(self, index: int, anchor):
+        line = self._line(index)
+        if line is None:
             return
-        self.select_table(current)
+        menu = QMenu(self)
+        menu.addAction("\U0001F4DD  Nota para cocina…", lambda _=False: self.edit_line_note(index))
+        move = menu.addMenu("\U0001F37D  Mover a plato")
+        if self.order_manager.plate_applies(line["category"]):
+            used = self.order_manager.used_plates(self.current_table)
+            top = min(max(used + [line["plate"], 0]) + 1, MAX_PLATES)
+            for plate in [0] + list(range(1, top + 1)):
+                suffix = "" if plate == 0 or plate in used else "  (nuevo)"
+                action = move.addAction(f"{plate_label(plate)}{suffix}",
+                                        lambda _=False, p=plate: self.move_line(index, p))
+                action.setEnabled(plate != line["plate"])
+        else:
+            move.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction(f"\U0001F5D1  Quitar todo ({line['qty']})", lambda _=False: self.remove_whole_line(index))
+        menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
-    def select_table(self, item):
-        table_name = item.data(Qt.ItemDataRole.UserRole)
-        self.order_manager.set_current_table(table_name)
-        self.update_order_display()
+    def edit_line_note(self, index: int):
+        line = self._line(index)
+        if line is None:
+            return
+        note, ok = QInputDialog.getText(
+            self, "Nota para cocina", f"{line['qty']}× {line['dish']} ({line['variant']})",
+            text=line["note"])
+        if not ok:
+            return
+        try:
+            changed, already_sent = self.order_manager.set_line_note(self.current_table, index, note)
+        except (KeyError, PermissionError) as e:
+            self.toast.show_message(str(e), "error")
+            return
+        if changed and already_sent:
+            self.toast.show_message(f"Nota guardada. {already_sent} ya salieron en comanda: avisa a cocina.",
+                                    "warning", 5000)
+
+    def move_line(self, index: int, plate: int):
+        try:
+            moved, already_sent = self.order_manager.move_line_to_plate(self.current_table, index, plate)
+        except (KeyError, ValueError, PermissionError) as e:
+            self.toast.show_message(str(e), "error")
+            return
+        if already_sent:
+            self.toast.show_message(f"Movido al {plate_label(plate)}. {already_sent} ya salieron en "
+                                    f"comanda: avisa a cocina.", "warning", 5000)
+        elif moved:
+            self.toast.show_message(f"Movido al {plate_label(plate)}", "success", 1500)
+
+    def remove_whole_line(self, index: int):
+        line = self._line(index)
+        if line is None:
+            return
+        reply = QMessageBox.question(
+            self, "Quitar", f"¿Quitar {line['qty']}× {line['dish']} ({line['variant']}) del pedido?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.change_line_qty(index, -line["qty"])
 
     # ----------------------------------------------------------------
-    #  CRUD de pedidos
+    #  Crear, renombrar, eliminar
     # ----------------------------------------------------------------
     def _require_table(self, message="Selecciona un pedido primero") -> str:
         table = self.current_table
         if not table:
-            QMessageBox.warning(self, "Sin pedido", message)
+            self.toast.show_message(message, "warning")
         return table
 
     def _require_open_table(self, action: str) -> str:
         table = self._require_table()
         if table and self.order_manager.is_paid(table):
-            QMessageBox.warning(self, "Pedido pagado", f"Este pedido ya fue pagado.\n{action}")
+            self.toast.show_message(f"Este pedido ya fue cobrado. {action}", "warning")
             return ""
         return table
 
-    def add_pedido(self):
-        suggestion = self.order_manager.suggest_name(f"Mesa {len(self.order_manager.get_all_tables()) + 1}")
-        dialog = AddOrderDialog(self, suggested_name=suggestion)
+    def add_pedido(self) -> bool:
+        dialog = AddOrderDialog(self, occupied=self.order_manager.get_all_tables(),
+                                table_count=int(self.config.get("numero_mesas", 8)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
+            return False
         ok, result = self.order_manager.create_table(dialog.get_order_name(), dialog.get_order_type())
         if not ok:
-            QMessageBox.warning(
-                self, "Nombre en uso",
-                f"Ya existe una mesa con ese nombre.\nPrueba con: '{result}'.",
-            )
-            return
-        self.order_manager.set_current_table(result)
-        self.refresh_table_list()
-        self.update_order_display()
-        self.search_input.setFocus()
+            QMessageBox.warning(self, "Nombre en uso",
+                                f"Ya existe un pedido con ese nombre.\nPrueba con: '{result}'.")
+            return False
+        self.select_order(result)
+        self._focus_search()
+        self.toast.show_message(
+            f"Pedido {self.order_manager.get_order_number(result)} abierto para «{result}»", "success")
+        return True
 
     def edit_table_name(self):
-        table = self._require_open_table("No se puede editar el nombre.")
+        table = self._require_open_table("No se puede renombrar.")
         if not table:
             return
         dialog = EditTableDialog(table, self)
@@ -597,191 +941,63 @@ class ProvaRestaurant(QMainWindow):
             return
         new_name = dialog.get_new_name()
         if not new_name:
-            QMessageBox.warning(self, "Nombre vacio", "Ingresa un nombre valido.")
+            self.toast.show_message("Ingresa un nombre válido.", "warning")
             return
         if not self.order_manager.rename_table(table, new_name):
             suggestion = self.order_manager.suggest_name(new_name)
-            QMessageBox.warning(
-                self, "Nombre en uso",
-                f"Ya existe '{new_name}'.\nPrueba con: '{suggestion}'.",
-            )
+            QMessageBox.warning(self, "Nombre en uso",
+                                f"Ya existe '{new_name}'.\nPrueba con: '{suggestion}'.")
 
     def delete_table(self):
         table = self._require_table()
         if not table:
             return
         if self.order_manager.is_paid(table):
-            text = (f"El pedido '{table}' ya fue PAGADO y guardado en Excel.\n"
-                    f"\u00bfDeseas quitarlo de la lista?")
-        elif self.order_manager.get_items(table):
-            text = (f"El pedido '{table}' tiene platillos SIN cobrar.\n"
-                    f"\u00bfEliminarlo de todas formas? (quedara registrado en la auditoria)")
+            self.order_manager.delete_table(table)
+            self.toast.show_message(f"«{table}» quitado de la lista (sigue en el Excel).", "info")
+            return
+        if self.order_manager.get_items(table):
+            text = (f"«{table}» tiene platillos SIN cobrar.\n"
+                    f"¿Eliminarlo de todas formas? Quedará registrado en la auditoría.")
         else:
-            text = f"\u00bfEliminar el pedido '{table}'?"
-        reply = QMessageBox.question(
-            self, "Confirmar", text,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+            text = f"¿Eliminar el pedido «{table}»?"
+        reply = QMessageBox.question(self, "Eliminar pedido", text,
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.order_manager.delete_table(table)
 
-    def _add_items(self, category, dish, variant, price):
-        table = self._require_open_table("No se pueden agregar mas platillos.")
+    def clear_paid_orders(self):
+        removed = self.order_manager.remove_paid_orders()
+        if removed:
+            self.toast.show_message(f"{removed} pedido(s) cobrados quitados de la lista. "
+                                    f"Siguen en el Excel del día.", "info")
+
+    def set_order_type(self, order_type: str):
+        table = self.current_table
         if not table:
-            return False
-        plate = self.plate_combo.currentData() or 0
-        qty = self.qty_spin.value()
+            return
         try:
-            self.order_manager.add_item(table, category, dish, variant, price,
-                                        note=self.note_input.text(), qty=qty, plate=plate)
-        except (KeyError, ValueError, PermissionError) as e:
-            QMessageBox.warning(self, "No se pudo agregar", str(e))
-            return False
-        if plate and self.order_manager.plate_applies(category):
-            self.statusBar().showMessage(f"{qty}x {dish} ({variant}) al {plate_label(plate)}", 4000)
-        self.qty_spin.setValue(1)
-        self.note_input.clear()
-        return True
+            self.order_manager.set_order_type(table, order_type)
+        except PermissionError as e:
+            self.toast.show_message(str(e), "error")
+            self.refresh_ticket()
 
-    # ----------------------------------------------------------------
-    #  Platos
-    # ----------------------------------------------------------------
-    def _refresh_plate_combo(self):
-        """
-        Opciones: Sin plato, los platos que ya usa el pedido y uno nuevo.
-        Al cambiar de mesa se elige el ultimo plato usado (o el Plato 1).
-        """
-        table = self.current_table
-        used = self.order_manager.used_plates(table) if table else []
-        if table != self._plate_combo_table:
-            self._plate_combo_table = table
-            selected = used[-1] if used else 1
-        else:
-            selected = self.plate_combo.currentData()
-            selected = 1 if selected is None else selected
-        top = min(max(used + [selected]) + 1, MAX_PLATES)
-        self.plate_combo.blockSignals(True)
-        self.plate_combo.clear()
-        self.plate_combo.addItem("Sin plato", 0)
-        for plate in range(1, top + 1):
-            suffix = "" if plate in used else "  (nuevo)"
-            self.plate_combo.addItem(f"{plate_label(plate)}{suffix}", plate)
-        self.plate_combo.setCurrentIndex(max(0, self.plate_combo.findData(selected)))
-        self.plate_combo.blockSignals(False)
-        self.plate_combo.setEnabled(bool(table) and not self.order_manager.is_paid(table))
-
-    def organize_plates(self):
-        table = self._require_open_table("No se pueden cambiar los platos.")
-        if not table:
-            return
-        if not self.order_manager.get_items(table):
-            QMessageBox.warning(self, "Pedido vacio", "Primero agrega platillos al pedido.")
-            return
-        PlateDialog(self.order_manager, table, self).exec()
-
-    def add_order(self):
-        category = self.category_combo.currentText()
-        dish = self.dish_combo.currentText()
-        variant = self.variant_combo.currentData()
-        price = self.menu_data.get_price(category, dish, variant) if variant else None
-        if price is None:
-            QMessageBox.warning(self, "Menu", "Selecciona un platillo valido del menu.")
-            return
-        self._add_items(category, dish, variant, price)
-
-    def delete_platillo(self):
-        table = self._require_open_table("No se pueden quitar platillos.")
-        if not table:
-            return
-        lines = self.order_manager.get_order_lines(table)
-        if not lines:
-            QMessageBox.warning(self, "Pedido vacio", "No hay platillos para quitar")
-            return
-        dialog = DeleteItemDialog(lines, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.get_selected_index() is not None:
-            try:
-                self.order_manager.remove_line(table, dialog.get_selected_index(),
-                                               dialog.get_selected_count())
-            except (KeyError, PermissionError) as e:
-                QMessageBox.warning(self, "No se pudo quitar", str(e))
-
-    # ----------------------------------------------------------------
-    #  Display del pedido
-    # ----------------------------------------------------------------
-    def update_order_display(self):
-        table = self.current_table
-        order = self.order_manager.get_order(table) if table else None
-        self._refresh_plate_combo()
-        if order is None:
-            self.order_display.clear()
-            self.table_info.setText(NO_TABLE_TEXT)
-            self.order_type_combo.setEnabled(False)
-            return
-
-        theme = self.theme_manager.get_current_theme()
-        self.table_info.setText(f"Mesa: {table}   ({order['number']})")
-        self.order_type_combo.setCurrentText(order["order_type"])
-        self.order_type_combo.setEnabled(not order["paid"])
-
-        esc = html.escape
-        lines = self.order_manager.get_order_lines(table)
-        total = sum(l["subtotal"] for l in lines)
-        parts = [f"<h3 style='margin:0'>{esc(order['number'])} - {esc(table)}</h3>"]
-        info = [f"Tipo: <b>{esc(order['order_type'])}</b>"]
-        if order["paid"]:
-            payment = order["payment"]
-            status = f"<b style='color:{theme['success']}'>PAGADO ({esc(payment['method'])})</b>"
-            if payment.get("change"):
-                status += f" - Cambio: {money(payment['change'])} en {esc(payment['change_method'])}"
-        else:
-            status = f"<b style='color:{theme['danger']}'>PENDIENTE</b>"
-        info.append(f"Estado: {status}")
-        delivery = order.get("delivery")
-        if delivery and order["order_type"] == ORDER_TYPE_TAKEAWAY:
-            info.append(f"Moto: {money(delivery['moto_cost'])} ({esc(delivery['moto_payment_method'])})")
-        parts.append("<p style='margin:4px 0 8px 0'>" + " &nbsp;|&nbsp; ".join(info) + "</p>")
-
-        if lines:
-            with_plates = any(line["plate"] for line in lines)
-            indent = "&nbsp;&nbsp;&nbsp;&nbsp;" if with_plates else ""
-            parts.append("<table width='100%' cellspacing='0' cellpadding='4'>")
-            for plate, plate_lines in group_lines_by_plate(lines):
-                if with_plates:
-                    title = plate_label(plate) if plate else "Sin plato (bebidas y para compartir)"
-                    subtotal = sum(l["subtotal"] for l in plate_lines)
-                    parts.append(
-                        f"<tr><td style='padding-top:8px'><b style='color:{theme['primary']}'>"
-                        f"\U0001F37D {esc(title)}</b></td>"
-                        f"<td align='right' style='padding-top:8px;color:{theme['muted']}'>"
-                        f"{money(subtotal)}</td></tr>")
-                for line in plate_lines:
-                    name = f"{indent}{line['qty']} x {esc(line['dish'])} ({esc(line['variant'])})"
-                    if line["note"]:
-                        name += (f"<br/>{indent}<i style='color:{theme['note']}'>"
-                                 f"&nbsp;&nbsp;Nota: {esc(line['note'])}</i>")
-                    parts.append(f"<tr><td>{name}</td>"
-                                 f"<td align='right' width='110'>{money(line['subtotal'])}</td></tr>")
-            parts.append("</table>")
-        else:
-            parts.append("<p><i>Pedido vacio. Agrega platillos con el menu o la busqueda rapida.</i></p>")
-        parts.append(f"<hr/><p style='font-size:17px'><b>TOTAL: {money(total)}</b></p>")
-        self.order_display.setHtml("".join(parts))
-
-    # ----------------------------------------------------------------
-    #  Pago
-    # ----------------------------------------------------------------
+    # ================================================================
+    #  Cobro
+    # ================================================================
     def mark_as_paid(self):
         table = self._require_table()
         if not table:
             return
         if self.order_manager.is_paid(table):
-            QMessageBox.information(self, "Ya pagado", "Este pedido ya fue registrado como pagado.")
+            self.toast.show_message("Este pedido ya fue cobrado.", "info")
+            return
+        if not self.order_manager.get_items(table):
+            self.toast.show_message("El pedido está vacío.", "warning")
             return
         total = self.order_manager.get_total(table)
-        if not self.order_manager.get_items(table):
-            QMessageBox.warning(self, "Pedido vacio", "El pedido esta vacio")
-            return
+        number = self.order_manager.get_order_number(table)
 
         if self.order_manager.get_order_type(table) == ORDER_TYPE_TAKEAWAY:
             delivery_dlg = DeliveryDialog(self, self.order_manager.get_delivery_details(table))
@@ -790,14 +1006,13 @@ class ProvaRestaurant(QMainWindow):
             self.order_manager.set_delivery_details(
                 table, delivery_dlg.get_moto_cost(), delivery_dlg.get_moto_method())
 
-        dialog = PaymentDialog(self, total=total)
+        dialog = PaymentDialog(self, total=total, title=f"{number}  ·  {table}")
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        method = dialog.get_payment_method()
         try:
             result = self.order_manager.register_payment(
                 table,
-                method=method,
+                method=dialog.get_payment_method(),
                 cash_amount=dialog.get_cash_amount(),
                 qr_amount=dialog.get_qr_amount(),
                 change_method=dialog.get_change_method(),
@@ -805,8 +1020,8 @@ class ProvaRestaurant(QMainWindow):
             )
         except OrderChangedError as e:
             QMessageBox.warning(
-                self, "El pedido cambio",
-                f"Mientras cobrabas se agregaron platillos a '{table}'.\n"
+                self, "El pedido cambió",
+                f"Mientras cobrabas se agregaron platillos a «{table}».\n"
                 f"Nuevo total: {money(e.new_total)}.\n\nRevisa el pedido y vuelve a cobrar.")
             return
         except (KeyError, ValueError, PermissionError) as e:
@@ -819,32 +1034,19 @@ class ProvaRestaurant(QMainWindow):
             return
 
         details = self.order_manager.get_payment_details(table)
-        number = self.order_manager.get_order_number(table)
-        msg = (f"Pago registrado exitosamente\n\n"
-               f"Pedido: {number} - {table}\n"
-               f"Total: Bs. {details['total']:.2f}\n"
-               f"Metodo: {method}\n")
-        if method in ("Efectivo", "Mixto"):
-            if method == "Mixto":
-                msg += f"Efectivo: Bs. {details['cash_amount']:.2f}\nQR: Bs. {details['qr_amount']:.2f}\n"
-            else:
-                msg += f"Recibido: Bs. {details['cash_amount']:.2f}\n"
-            if details["change"] > 0:
-                msg += f"CAMBIO: Bs. {details['change']:.2f} en {details['change_method']}\n"
+        message = f"✔ Cobrado {number}  ·  {money(details['total'])}  ·  {details['method']}"
+        if details["change"] > 0:
+            message += f"  ·  Cambio {money(details['change'])} en {details['change_method']}"
+        self.toast.show_message(message, "success", 6000)
+        if not result.excel_ok:
+            QMessageBox.warning(self, "Revisar Excel", f"La venta quedó registrada, pero:\n{result.message}")
 
-        if result.excel_ok:
-            QMessageBox.information(self, "Pago Confirmado",
-                                    msg + "\nGuardado automaticamente en el Excel del dia.")
-        else:
-            QMessageBox.warning(self, "Pago Confirmado (revisar Excel)",
-                                msg + f"\nLa venta quedo registrada, pero:\n{result.message}")
-
-    # ----------------------------------------------------------------
-    #  Imprimir
-    # ----------------------------------------------------------------
+    # ================================================================
+    #  Impresion
+    # ================================================================
     def print_html(self, body: str) -> bool:
         try:
-            from PyQt6.QtGui import QTextDocument
+            from PyQt6.QtGui import QFont, QTextDocument
             from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 
             printer = QPrinter(QPrinter.PrinterMode.HighResolution)
@@ -855,7 +1057,7 @@ class ProvaRestaurant(QMainWindow):
             doc.setDefaultFont(QFont("Arial", 10))
             doc.setHtml(body)
             doc.print(printer)
-            self.statusBar().showMessage("Enviado a la impresora", 5000)
+            self.toast.show_message("\U0001F5A8 Enviado a la impresora", "success")
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al imprimir: {e}")
@@ -877,11 +1079,11 @@ class ProvaRestaurant(QMainWindow):
         lines = self.order_manager.get_order_lines(table, kitchen_pending_only=not reprint_all)
         if not lines:
             if not order["items"]:
-                QMessageBox.warning(self, "Pedido vacio", "No hay nada para imprimir")
+                self.toast.show_message("El pedido está vacío.", "warning")
                 return
             reply = QMessageBox.question(
                 self, "Comanda",
-                "Todos los platillos ya se enviaron a cocina.\n\u00bfReimprimir la comanda completa?",
+                "Todos los platillos ya se enviaron a cocina.\n¿Reimprimir la comanda completa?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply != QMessageBox.StandardButton.Yes:
                 return
@@ -924,7 +1126,7 @@ class ProvaRestaurant(QMainWindow):
         order = self.order_manager.get_order(table)
         lines = self.order_manager.get_order_lines(table)
         if not lines:
-            QMessageBox.warning(self, "Pedido vacio", "No hay nada para imprimir")
+            self.toast.show_message("El pedido está vacío.", "warning")
             return
         esc = html.escape
         total = sum(l["subtotal"] for l in lines)
@@ -949,79 +1151,15 @@ class ProvaRestaurant(QMainWindow):
             if payment.get("change"):
                 body.append(f"<br/>Recibido: {money(payment['amount_paid'])} - Cambio: {money(payment['change'])}")
             body.append("</p>")
-        body.append("<p align='center'>Gracias por su preferencia!</p>")
+        body.append("<p align='center'>¡Gracias por tu visita!<br/>No la mires mucho, se te va a antojar</p>")
         self.print_html("".join(body))
 
-    # ----------------------------------------------------------------
-    #  Busqueda rapida
-    # ----------------------------------------------------------------
-    def _build_quick_index(self):
-        self.quick_index.clear()
-        menu = self.menu_data.get_menu_prices()
-        for category, dishes in menu.items():
-            for dish, variants in dishes.items():
-                for variant, price in variants.items():
-                    label = f"{dish} ({variant}) - {money(price)}"
-                    self.quick_index[label] = (category, dish, variant, float(price))
-
-    def setup_quick_search(self, parent_layout):
-        from PyQt6.QtCore import QStringListModel
-
-        row = QHBoxLayout()
-        lbl = QLabel("Busqueda rapida (Ctrl+K):")
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Ej: taco, birria, horchata...")
-
-        self.completer = QCompleter(QStringListModel([], self), self)
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.completer.setMaxVisibleItems(12)
-        self.search_input.setCompleter(self.completer)
-
-        self.search_add_btn = self.create_fancy_button("Agregar", "success", self.on_quick_add)
-        self.search_input.returnPressed.connect(self.on_quick_add)
-        self.completer.activated[str].connect(self.on_quick_choose)
-
-        row.addWidget(lbl)
-        row.addWidget(self.search_input, 1)
-        row.addWidget(self.search_add_btn)
-        parent_layout.addLayout(row)
-
-    def on_quick_choose(self, text: str):
-        # Enter sobre la lista dispara activated y luego returnPressed: se agrega una sola vez
-        self._completer_just_used = True
-        QTimer.singleShot(0, lambda: setattr(self, "_completer_just_used", False))
-        if text in self.quick_index:
-            self._add_from_quick_key(text)
-
-    def on_quick_add(self):
-        if self._completer_just_used:
-            return
-        txt = (self.search_input.text() or "").strip()
-        if not txt:
-            return
-        if txt in self.quick_index:
-            self._add_from_quick_key(txt)
-            return
-        matches = [k for k in self.quick_index if txt.lower() in k.lower()]
-        if len(matches) == 1:
-            self._add_from_quick_key(matches[0])
-        elif matches:
-            self.completer.setCompletionPrefix(txt)
-            self.completer.complete()
-        else:
-            QMessageBox.information(self, "Sin resultados", f"No encontre '{txt}'.")
-
-    def _add_from_quick_key(self, key: str):
-        category, dish, variant, price = self.quick_index[key]
-        if self._add_items(category, dish, variant, price):
-            QTimer.singleShot(0, self.search_input.clear)
-
-    # ----------------------------------------------------------------
+    # ================================================================
     #  Reportes y respaldos
-    # ----------------------------------------------------------------
+    # ================================================================
     def show_day_summary(self):
-        DaySummaryDialog(self.order_manager, self.local_name, self).exec()
+        DaySummaryDialog(self.order_manager, self.local_name, self,
+                         colors=self.theme_manager.get_current_theme()).exec()
 
     def save_to_excel(self):
         today = self.order_manager.today()
@@ -1032,11 +1170,10 @@ class ProvaRestaurant(QMainWindow):
         if not ok:
             QMessageBox.critical(self, "Error", f"Error al exportar: {message}")
             return
-        text = (f"Respaldo exportado a:\n{filename}\n\n"
-                f"Incluye todos los pedidos en pantalla (pagados y pendientes).")
-        if not daily_ok:
-            text += f"\n\nAtencion: {daily_message}"
-        QMessageBox.information(self, "Exito", text)
+        if daily_ok:
+            self.toast.show_message(f"\U0001F4BE Respaldo guardado: {os.path.basename(filename)}", "success", 4000)
+        else:
+            self.toast.show_message(f"Respaldo guardado, pero: {daily_message}", "warning", 7000)
 
     def open_data_folder(self):
         folder = os.path.dirname(self.order_manager.daily_excel_path())
