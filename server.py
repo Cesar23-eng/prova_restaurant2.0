@@ -6,6 +6,7 @@ Corre en un hilo aparte junto a la app PyQt6 y comparte el mismo OrderManager.
 Todas las rutas /api/* piden el PIN de meseros (cabecera X-PIN) para que un
 cliente conectado al WiFi del local no pueda cargar pedidos.
 """
+import datetime
 import hmac
 import os
 import socket
@@ -13,18 +14,30 @@ import threading
 import time
 from collections import OrderedDict
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 from models.order import MAX_PLATES, ORDER_TYPE_LOCAL, ORDER_TYPES
-from utils.config import resource_dir
+from utils.config import app_dir, resource_dir
+from utils.icons import menu_icons
 
 MAX_FAILED_PIN_ATTEMPTS = 10
 PIN_LOCKOUT_SECONDS = 60
 MAX_REMEMBERED_REQUESTS = 500
 
 
-def create_app(order_manager, menu_data, pin) -> Flask:
-    """`pin` puede ser un texto o una funcion que devuelve el PIN vigente."""
+def _minutes_since(stamp) -> int:
+    try:
+        started = datetime.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, int((datetime.datetime.now() - started).total_seconds() // 60))
+
+
+def create_app(order_manager, menu_data, pin, table_count: int = 8) -> Flask:
+    """
+    `pin` puede ser un texto o una funcion que devuelve el PIN vigente.
+    `table_count` es la cantidad de botones rapidos "Mesa 1..N" en el celular.
+    """
     current_pin = pin if callable(pin) else (lambda: pin)
     app = Flask(__name__, template_folder=os.path.join(resource_dir(), "templates"))
     app.json.ensure_ascii = False
@@ -68,6 +81,15 @@ def create_app(order_manager, menu_data, pin) -> Flask:
     def index():
         return render_template("mesero.html")
 
+    @app.route("/logo.png")
+    def logo():
+        """Logo del local para el encabezado del celular (publico, sin PIN)."""
+        for name in ("prova.png", "PROVA.png"):
+            path = os.path.join(app_dir(), name)
+            if os.path.exists(path):
+                return send_file(path, mimetype="image/png")
+        return "", 404
+
     @app.route("/api/ping")
     def api_ping():
         return jsonify({"ok": True})
@@ -77,6 +99,8 @@ def create_app(order_manager, menu_data, pin) -> Flask:
         return jsonify({
             "categorias_sin_plato": order_manager.no_plate_categories,
             "max_platos": MAX_PLATES,
+            "iconos": menu_icons(menu_data.get_menu_prices()),
+            "numero_mesas": int(table_count),
         })
 
     @app.route("/api/menu")
@@ -97,6 +121,8 @@ def create_app(order_manager, menu_data, pin) -> Flask:
             "pagado": order["paid"],
             "items": len(order["items"]),
             "total": round(sum(i["price"] for i in order["items"]), 2),
+            # Calculado en la caja: el reloj de cada celular puede estar desfasado
+            "minutos": _minutes_since(order.get("created_at")),
         }
 
     @app.route("/api/mesas", methods=["GET"])

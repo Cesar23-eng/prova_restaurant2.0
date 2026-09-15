@@ -127,3 +127,14 @@ def test_invalid_plate_from_waiter_adds_nothing(client, manager):
     res = api(client, "post", "/api/pedido/Mesa 1/items", json={"items": [taco(), taco(plato=500)]})
     assert res.status_code == 400
     assert manager.get_items("Mesa 1") == []
+
+
+def test_logo_is_public_and_tables_include_waiting_minutes(client, manager):
+    assert client.get("/logo.png").status_code in (200, 404)
+    manager.create_table("Mesa 1")
+    mesa = api(client, "get", "/api/mesas").get_json()[0]
+    assert "minutos" in mesa and mesa["minutos"] >= 0
+    ajustes = api(client, "get", "/api/ajustes").get_json()
+    assert ajustes["iconos"]["categorias"]["Platillos"] == "\U0001F32E"
+    assert ajustes["iconos"]["productos"]["Taco"] == "\U0001F32E"
+    assert ajustes["numero_mesas"] == 8

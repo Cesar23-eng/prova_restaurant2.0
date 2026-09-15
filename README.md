@@ -1,9 +1,9 @@
-# PROVA - Sistema de Pedidos
+# PRÖVA México · Sistema de pedidos
 
-Punto de venta para PROVA (comida mexicana): caja en Windows (PyQt6) y toma de
-pedidos desde el celular de los meseros por WiFi.
+Punto de venta de PRÖVA México (comida mexicana, Santa Cruz de la Sierra): caja en
+Windows (PyQt6) y toma de pedidos desde el celular de los meseros por WiFi.
 
-## Instalacion (desarrollo)
+## Instalación (desarrollo)
 
 ```bash
 pip install -r requirements.txt
@@ -19,42 +19,67 @@ pyinstaller main.spec
 
 Copia `menu_precios.xlsx` y `prova.png` junto a `dist/main.exe`.
 
-## Uso diario
+## Diseño
 
-| Accion | Donde |
+La interfaz usa la identidad de la marca: el negro del logo y del techo del local,
+el rojo de los labios para las acciones principales, el rosa de la firma «México»,
+el verde del chile para cobrar, la madera de las mesas para los platos y el turquesa
+y rosa de los sombreros para QR y pedidos para llevar. Todos los colores de texto
+cumplen contraste WCAG AA.
+
+- **Tema Noche** (predeterminado) y **Tema Día** (concreto claro), con el botón del
+  encabezado. Se guarda en `tema_visual` de `config.json`.
+- Tipografías de Windows: *Bahnschrift Condensed* para títulos y montos (parecida a la
+  letra de PRÖVA) y *Segoe Script* para la firma «México».
+
+## Caja (PC)
+
+La pantalla se divide en tres columnas, como un POS de restaurante:
+
+| Columna | Qué hace |
 | --- | --- |
-| Nuevo pedido | Boton **Nuevo Pedido** o `Ctrl+N` (se elige *En el local* o *Para llevar*) |
-| Agregar platillos | Menu (categoria, platillo, variante, cantidad, nota) o busqueda rapida `Ctrl+K` |
-| Cobrar | **Cobrar** o `F9`. En el cobro: `F1` efectivo, `F2` QR, `F3` mixto |
-| Comanda de cocina | **Imprimir > Comanda para cocina**: solo imprime lo nuevo desde la ultima comanda |
-| Cuenta del cliente | **Imprimir > Cuenta** o `Ctrl+P` |
-| Cierre de caja | **Resumen del dia**: efectivo y QR netos, cambio, motos, productos vendidos |
+| **Pedidos** | Tarjetas con número, total, minutos de espera (ámbar desde 20 min, rojo desde 40), platillos sin comanda y si lo abrió un mesero |
+| **Menú** | Categorías, buscador sin tildes (`Ctrl+K`) y tarjetas de productos: **un toque en la variante agrega** al pedido |
+| **Ticket** | Tipo de consumo, plato activo, líneas con − / + y menú ⋯ (nota, mover de plato, quitar), comanda, cuenta y **Cobrar** |
 
-En la lista de mesas, la campana (🔔) indica platillos que todavia no salieron en una comanda.
+| Acción | Cómo |
+| --- | --- |
+| Nuevo pedido | **＋ Nuevo pedido** o `Ctrl+N`; botones rápidos *Mesa 1…8* (ajustable con `numero_mesas`) |
+| Agregar | Tocar la variante en el menú. Si no hay pedido abierto, pide crearlo. «Cantidad» multiplica el toque |
+| Buscar | `Ctrl+K`, escribir y `Enter` agrega si queda un solo resultado; `Esc` limpia |
+| Cobrar | **Cobrar** o `F9`. `F1` efectivo, `F2` QR, `F3` mixto; montos rápidos y cambio en grande |
+| Comanda de cocina | **🔔 Comanda** o `F8`: imprime solo lo nuevo. ⋯ → reimprimir completa |
+| Cuenta del cliente | **🧾 Cuenta** o `Ctrl+P` |
+| Cierre de caja | **Resumen del día**: total, efectivo y QR netos, cambio, motos, productos |
+
+Los avisos (agregado, cobrado, mesero envió algo) aparecen abajo sin interrumpir; solo
+se pide confirmación para acciones que no se pueden deshacer.
 
 ### Platos (emplatado para cocina)
 
 Los tacos se piden por unidad. Si en una mesa dos personas piden tacos, cada
-platillo se asigna a un plato para que cocina sepa que va junto:
+platillo se asigna a un plato para que cocina sepa qué va junto:
 
-- **Caja:** elige el plato en el selector **Plato** junto a la cantidad antes de agregar.
-  Al cambiar de mesa queda seleccionado el ultimo plato usado. El boton **Platos**
-  permite repartir despues (ej. de 5 tacos al pastor, 2 al Plato 2).
-- **Celular:** en el menu, la barra *Plato: 1 2 + Nuevo* indica a que plato va lo que
-  se toca; en el carrito cada linea tiene su selector de plato.
+- **Caja:** la barra **PLATO 1 · 2 · ＋ · Sin plato** del ticket indica a qué plato va
+  lo que se toca en el menú. Cada línea se puede mover de plato con ⋯, y
+  ⋯ → *Repartir en platos* permite dividir (ej. de 5 tacos al pastor, 2 al Plato 2).
+- **Celular:** la misma barra está en el menú; en el carrito cada línea tiene su
+  selector de plato.
 - **Comanda de cocina:** sale agrupada (`== PLATO 1 ==`, `== PLATO 2 ==`). Si se agregan
-  platillos a un plato que cocina ya recibio, el encabezado dice *(agregar)*.
-- Las categorias de `categorias_sin_plato` en `config.json` (por defecto *Bebidas* y
-  *Jugos*) nunca llevan plato. La cuenta del cliente y el Excel suman las lineas sin
+  platillos a un plato que cocina ya recibió, el encabezado dice *(agregar)*.
+- Las categorías de `categorias_sin_plato` en `config.json` (por defecto *Bebidas* y
+  *Jugos*) nunca llevan plato. La cuenta del cliente y el Excel suman las líneas sin
   separarlas por plato.
 
-### Meseros desde el celular
+## Meseros desde el celular
 
 1. El celular debe estar en el mismo WiFi que la PC de caja.
-2. En la barra inferior de la caja, **Acceso meseros / PIN** muestra la direccion
+2. En el encabezado de la caja, **📱 Meseros** muestra la dirección
    (ej. `http://192.168.0.101:5000`) y el PIN.
-3. El mesero abre la direccion, ingresa el PIN una vez y toma pedidos: puede crear
-   mesas, buscar platillos, poner cantidades y notas para cocina y ver lo ya pedido.
+3. El mesero abre la dirección, ingresa el PIN una vez y toma pedidos: abre mesas con
+   un toque, busca platillos, elige el plato, agrega notas para cocina, ve lo ya
+   pedido y envía con el botón inferior. El pedido no se pierde si se recarga la
+   página y no se duplica si el WiFi falla al enviar.
 
 La primera vez Windows puede preguntar por el Firewall: permite el acceso en
 **redes privadas**. El PIN se genera solo y se puede cambiar desde la caja.
@@ -69,7 +94,7 @@ Todo se guarda en la carpeta `data/` junto al programa:
 | `AAAA-MM-DD/ventas_AAAA-MM-DD.jsonl` | Registro de cada cobro (fuente de verdad) |
 | `AAAA-MM-DD/pedidos_AAAA-MM-DD.xlsx` | Excel del dia: hojas *En el local*, *Para llevar* y *Resumen* |
 | `AAAA-MM-DD/audit_log_AAAA-MM-DD.txt` | Auditoria: quien agrego, quito, cobro o elimino |
-| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema, categorias sin plato |
+| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, categorías sin plato |
 | `errores.log` | Errores inesperados (la app no se cierra, avisa y registra) |
 
 - Si el Excel del dia esta abierto al cobrar, la venta igual queda registrada y la

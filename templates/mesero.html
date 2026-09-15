@@ -3,300 +3,436 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#1a5276" />
-  <title>PROVA - Mesero</title>
+  <meta name="theme-color" content="#0A0A0A" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="icon" href="/logo.png" />
+  <link rel="apple-touch-icon" href="/logo.png" />
+  <title>PRÖVA México · Meseros</title>
   <style>
+    /* Paleta de PRÖVA México: negro del logo, rojo de los labios, rosa de la firma,
+       verde del chile, madera de las mesas y turquesa/rosa de los sombreros */
     :root {
-      --bg: #f5f5f5;
-      --surface: #ffffff;
-      --primary: #1a5276;
-      --primary-soft: #eaf2ff;
-      --accent: #e67e22;
-      --success: #27ae60;
-      --danger: #c0392b;
-      --text: #2c3e50;
-      --muted: #7f8c8d;
-      --border: #dddddd;
-      --radius: 12px;
+      --bg: #0A0A0A;
+      --surface: #141414;
+      --surface2: #1C1C1C;
+      --surface3: #262626;
+      --border: #2E2E2E;
+      --border-strong: #444444;
+      --text: #F6F2EC;
+      --muted: #A39E97;
+      --primary: #D7262E;
+      --primary-hover: #E53A42;
+      --accent: #FF5A6E;
+      --success: #2E7D3E;
+      --success-soft: #132A19;
+      --qr: #0F7C6C;
+      --wood: #C9A27A;
+      --wood-text: #D8B48C;
+      --wood-soft: #2A221A;
+      --on-wood: #1B140C;
+      --pink: #F0579E;
+      --pink-soft: #34162A;
+      --warning: #F2A33A;
+      --warning-soft: #33240F;
+      --danger: #EF4B52;
+      --danger-soft: #3A1517;
+      --radius: 16px;
+      --title-font: "Bahnschrift SemiBold Condensed", "Bahnschrift", "Roboto Condensed", "Avenir Next Condensed",
+                    sans-serif-condensed, "Arial Narrow", sans-serif;
+      --script-font: "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { background: var(--bg); }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100dvh;
       -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
     }
-    button, input { font: inherit; color: inherit; }
-    button { cursor: pointer; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; border: none; background: none; }
     [hidden] { display: none !important; }
+    .title { font-family: var(--title-font); font-stretch: condensed; letter-spacing: 0.02em; }
+    /* Todo lo que usa la tipografia de marca sale condensado y seminegrita */
+    .title, .brand-name, .section-title h2, .pin-card h2, .sheet h3, .mesa-num, .mesa-total, .precio-tag,
+    .btn-big, .card-head h3, .line-price, .qty span, .done-overlay h2 {
+      font-stretch: condensed; font-weight: 600;
+    }
 
+    /* ---------- Encabezado ---------- */
     header {
-      background: var(--primary);
-      color: #fff;
-      padding: 14px 16px 10px;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(10, 10, 10, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
     }
-    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    header h1 { font-size: 1.2rem; font-weight: 700; }
-    header small { font-size: 0.8rem; opacity: 0.8; }
-    #header-mesa { font-weight: 700; font-size: 0.9rem; text-align: right; }
+    .header-row { display: flex; align-items: center; gap: 10px; }
+    .logo {
+      width: 40px; height: 40px; border-radius: 10px; background: #000; object-fit: contain;
+      flex-shrink: 0;
+    }
+    .brand { display: flex; flex-direction: column; line-height: 1; }
+    .brand-name { font-family: var(--title-font); font-size: 1.45rem; font-stretch: condensed; letter-spacing: 0.04em; }
+    .brand-script { font-family: var(--script-font); color: var(--accent); font-size: 0.8rem; margin-top: 2px; }
+    #header-mesa {
+      margin-left: auto; max-width: 48%;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: 0.85rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .steps { display: flex; gap: 6px; margin-top: 10px; }
-    .step {
-      flex: 1; text-align: center; padding: 5px 4px; border-radius: 20px;
-      font-size: 0.72rem; color: rgba(255,255,255,0.65);
-      border: 1px solid rgba(255,255,255,0.25);
+    .step { flex: 1; font-size: 0.7rem; color: var(--muted); text-align: center; }
+    .step::before {
+      content: ""; display: block; height: 4px; border-radius: 4px;
+      background: var(--surface3); margin-bottom: 4px;
     }
-    .step.active { background: #fff; color: var(--primary); font-weight: 700; }
-    .step.done { background: var(--success); border-color: var(--success); color: #fff; }
+    .step.done::before { background: var(--wood); }
+    .step.active { color: var(--text); font-weight: 700; }
+    .step.active::before { background: var(--primary); }
     #offline {
-      background: var(--danger); color: #fff; text-align: center;
-      font-size: 0.8rem; padding: 6px;
+      background: var(--danger-soft); color: var(--danger); text-align: center;
+      font-size: 0.85rem; font-weight: 600; padding: 8px; border-bottom: 1px solid var(--danger);
     }
 
-    main { padding: 14px 14px 110px; max-width: 720px; margin: 0 auto; }
-    .card {
-      background: var(--surface); border-radius: var(--radius);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 12px; overflow: hidden;
-    }
-    .card-header {
-      background: var(--primary); color: #fff; padding: 11px 14px;
-      font-weight: 600; font-size: 0.95rem;
-      display: flex; justify-content: space-between; align-items: center;
-    }
-    .card-body { padding: 14px; }
+    main { padding: 14px 14px calc(120px + var(--safe-bottom)); max-width: 720px; margin: 0 auto; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; margin: 4px 2px 12px; }
+    .section-title h2 { font-family: var(--title-font); font-size: 1.6rem; font-stretch: condensed; letter-spacing: 0.03em; }
     .muted { color: var(--muted); font-size: 0.88rem; }
     .center { text-align: center; }
 
+    /* ---------- Botones ---------- */
     .btn {
-      display: block; width: 100%; padding: 14px; border: none;
-      border-radius: var(--radius); font-size: 1rem; font-weight: 700;
-      text-align: center; margin-top: 10px; transition: transform 0.1s, opacity 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; min-height: 52px; padding: 12px 16px; border-radius: var(--radius);
+      font-weight: 700; font-size: 1rem; transition: transform 0.1s, background 0.15s, opacity 0.15s;
     }
     .btn:active { transform: scale(0.97); }
-    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn:disabled { opacity: 0.4; }
     .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
     .btn-success { background: var(--success); color: #fff; }
-    .btn-outline { background: transparent; color: var(--primary); border: 2px solid var(--primary); }
-    .btn-small {
-      width: auto; display: inline-block; margin: 0; padding: 6px 12px;
-      font-size: 0.85rem; border-radius: 20px; background: rgba(255,255,255,0.2); color: #fff;
+    .btn-ghost { background: var(--surface2); border: 1px solid var(--border); color: var(--text); }
+    .btn-big { font-family: var(--title-font); font-size: 1.3rem; font-stretch: condensed; letter-spacing: 0.02em; }
+    .icon-btn {
+      width: 42px; height: 42px; border-radius: 12px; background: var(--surface2);
+      border: 1px solid var(--border); font-size: 1.1rem;
     }
+    .link-btn { color: var(--muted); font-weight: 600; font-size: 0.9rem; padding: 8px 4px; }
 
-    input[type=text], input[type=password], input[type=search], input[inputmode] {
-      width: 100%; padding: 12px; border: 2px solid var(--border);
-      border-radius: 10px; background: #fff; font-size: 1rem;
+    input[type=text], input[type=password], input[type=search] {
+      width: 100%; min-height: 48px; padding: 12px 14px; border-radius: 14px;
+      border: 1px solid var(--border); background: var(--surface3); color: var(--text); font-size: 1rem;
     }
-    input:focus { outline: none; border-color: var(--primary); }
+    input::placeholder { color: var(--muted); }
+    input:focus, select:focus { outline: none; border-color: var(--primary); }
 
-    /* PIN */
-    .pin-input { font-size: 1.6rem !important; letter-spacing: 0.5em; text-align: center; }
+    /* ---------- PIN ---------- */
+    .pin-card { text-align: center; padding: 28px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 22px; margin-top: 8vh; }
+    .pin-logo { width: 110px; height: 110px; border-radius: 24px; background: #000; object-fit: contain; margin-bottom: 12px; }
+    .pin-card h2 { font-family: var(--title-font); font-size: 1.8rem; font-stretch: condensed; margin-bottom: 6px; }
+    .pin-input { font-size: 2rem !important; letter-spacing: 0.6em; text-align: center; margin: 18px 0 12px; }
 
-    /* MESAS */
-    .mesa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-    .mesa-btn {
-      background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius);
-      padding: 12px 8px; text-align: center; font-weight: 600; transition: transform 0.15s;
-      display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 104px;
+    /* ---------- Mesas ---------- */
+    .mesa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .mesa-card {
+      text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 118px;
+      transition: transform 0.12s, border-color 0.15s;
     }
-    .mesa-btn:active { transform: scale(0.95); }
-    .mesa-btn.selected { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
-    .mesa-btn:disabled { opacity: 0.45; border-color: var(--success); color: var(--success); }
-    .mesa-icon { font-size: 1.5rem; }
-    .mesa-num { font-size: 0.72rem; color: var(--muted); }
-    .mesa-name { font-size: 0.95rem; word-break: break-word; }
-    .mesa-meta { font-size: 0.75rem; color: var(--muted); font-weight: 500; }
-    .new-mesa-form { display: grid; gap: 10px; margin-top: 12px; }
+    .mesa-card:active { transform: scale(0.97); }
+    .mesa-card.selected { border: 2px solid var(--primary); }
+    .mesa-card:disabled { opacity: 0.5; }
+    .mesa-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .mesa-num { font-family: var(--title-font); color: var(--accent); font-size: 1rem; }
+    .mesa-name { font-weight: 800; font-size: 1.05rem; word-break: break-word; }
+    .mesa-meta { color: var(--muted); font-size: 0.8rem; }
+    .mesa-total { font-family: var(--title-font); font-size: 1.15rem; margin-top: auto; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 3px; border-radius: 999px; padding: 2px 8px;
+      font-size: 0.72rem; font-weight: 800; background: var(--surface3); color: var(--muted); white-space: nowrap;
+    }
+    .badge.warn { background: var(--warning-soft); color: var(--warning); }
+    .badge.late { background: var(--danger-soft); color: var(--danger); }
+    .badge.paid { background: var(--success-soft); color: #5BC374; }
+    .badge.takeaway { background: var(--pink-soft); color: var(--pink); }
+
+    /* ---------- Hoja inferior (nueva mesa) ---------- */
+    .sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300; }
+    .sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 301;
+      background: var(--surface); border-top: 1px solid var(--border-strong);
+      border-radius: 22px 22px 0 0; padding: 18px 16px calc(18px + var(--safe-bottom));
+      max-width: 720px; margin: 0 auto; animation: up 0.22s ease-out;
+    }
+    .sheet h3 { font-family: var(--title-font); font-size: 1.4rem; font-stretch: condensed; margin-bottom: 12px; }
+    .sheet form { display: grid; gap: 12px; }
+    @keyframes up { from { transform: translateY(100%); } to { transform: translateY(0); } }
     .segmented { display: flex; gap: 8px; }
     .segmented button {
-      flex: 1; padding: 10px; border-radius: 10px; border: 2px solid var(--border);
-      background: #fff; font-weight: 600; font-size: 0.9rem;
+      flex: 1; min-height: 46px; border-radius: 14px; border: 1px solid var(--border);
+      background: var(--surface2); font-weight: 700;
     }
-    .segmented button.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+    .segmented button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .quick-tables { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .quick-tables button {
+      min-height: 44px; border-radius: 12px; background: var(--surface2); border: 1px solid var(--border); font-weight: 700;
+    }
+    .quick-tables button:disabled { opacity: 0.35; }
 
-    /* MENU */
+    /* ---------- Menu ---------- */
     .sticky-tools {
-      position: sticky; top: var(--header-h, 104px); z-index: 50; background: var(--bg);
-      padding: 4px 0 8px; margin: -4px 0 4px;
+      position: sticky; top: var(--header-h, 96px); z-index: 50; background: var(--bg);
+      padding: 6px 0 10px; margin: -6px 0 6px;
     }
-    .cat-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0 2px; scrollbar-width: none; }
-    .cat-tabs::-webkit-scrollbar { display: none; }
-    .cat-tab {
-      white-space: nowrap; padding: 8px 16px; border-radius: 20px; border: 2px solid var(--border);
-      background: var(--surface); font-size: 0.85rem; font-weight: 600; color: var(--muted);
+    .mesa-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .mesa-bar .title { font-size: 1.25rem; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 2px; scrollbar-width: none; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip {
+      white-space: nowrap; min-height: 40px; padding: 8px 14px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--surface2); font-weight: 700; font-size: 0.9rem; color: var(--muted);
     }
-    .cat-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-    .platillo-list { display: flex; flex-direction: column; gap: 10px; }
-    .platillo-card { background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius); }
-    .platillo-name { padding: 11px 14px 2px; font-weight: 700; }
-    .platillo-cat { font-size: 0.72rem; color: var(--muted); font-weight: 500; margin-left: 6px; }
-    .variante-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 12px; }
+    .chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .plate-bar { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-top: 10px; scrollbar-width: none; }
+    .plate-bar::-webkit-scrollbar { display: none; }
+    .plate-bar-label { font-size: 0.75rem; font-weight: 800; color: var(--muted); letter-spacing: 0.08em; }
+    .plate-chip {
+      min-width: 42px; min-height: 38px; padding: 6px 12px; border-radius: 999px; border: 1.5px solid var(--wood);
+      background: transparent; color: var(--wood-text); font-weight: 800; font-size: 0.9rem; white-space: nowrap;
+    }
+    .plate-chip.active { background: var(--wood); color: var(--on-wood); }
+    .plate-chip.plate-new { border-style: dashed; }
+    .plate-hint { font-size: 0.75rem; color: var(--muted); padding-top: 6px; }
+
+    .platillo-list { display: grid; gap: 10px; }
+    .platillo-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+    .platillo-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .platillo-icon { font-size: 1.6rem; width: 42px; height: 42px; display: grid; place-items: center; background: var(--surface2); border-radius: 12px; }
+    .platillo-name { font-weight: 800; font-size: 1.05rem; }
+    .platillo-cat { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+    .variante-list { display: flex; flex-wrap: wrap; gap: 8px; }
     .variante-btn {
-      position: relative; padding: 8px 12px; border-radius: 20px; border: 2px solid var(--border);
-      background: var(--bg); font-size: 0.85rem; display: flex; align-items: center; gap: 6px;
-      transition: transform 0.1s;
+      position: relative; min-height: 44px; padding: 8px 12px; border-radius: 12px;
+      border: 1px solid var(--border); background: var(--surface2); font-weight: 700; font-size: 0.92rem;
+      display: inline-flex; align-items: center; gap: 8px; transition: transform 0.1s, background 0.15s;
     }
     .variante-btn:active { transform: scale(0.94); }
-    .variante-btn.flash { background: var(--success); color: #fff; border-color: var(--success); }
-    .precio-tag { font-size: 0.75rem; opacity: 0.75; }
+    .variante-btn.flash { background: var(--success); border-color: var(--success); color: #fff; }
+    .precio-tag { font-family: var(--title-font); color: var(--wood-text); font-size: 1rem; }
+    .variante-btn.flash .precio-tag { color: #fff; }
     .count-badge {
-      position: absolute; top: -8px; right: -6px; background: var(--accent); color: #fff;
-      border-radius: 10px; min-width: 20px; height: 20px; font-size: 0.72rem; font-weight: 800;
-      display: flex; align-items: center; justify-content: center; padding: 0 5px;
+      position: absolute; top: -8px; right: -6px; min-width: 22px; height: 22px; padding: 0 6px;
+      background: var(--primary); color: #fff; border-radius: 999px; font-size: 0.75rem; font-weight: 800;
+      display: grid; place-items: center; border: 2px solid var(--bg);
     }
 
-    /* CARRITO */
-    .line { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    /* ---------- Carrito ---------- */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+    .card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .card-head h3 { font-family: var(--title-font); font-size: 1.3rem; font-stretch: condensed; }
+    .plate-header {
+      display: flex; justify-content: space-between; margin: 14px 0 4px; padding: 7px 12px; border-radius: 10px;
+      background: var(--wood-soft); color: var(--wood-text); font-weight: 800; font-size: 0.85rem; letter-spacing: 0.04em;
+    }
+    .plate-header:first-of-type { margin-top: 4px; }
+    .line { padding: 12px 0; border-bottom: 1px solid var(--border); }
     .line:last-child { border-bottom: none; }
     .line-top { display: flex; align-items: center; gap: 10px; }
-    .line-name { flex: 1; font-weight: 600; font-size: 0.95rem; }
-    .line-name small { display: block; color: var(--muted); font-weight: 400; }
-    .line-price { font-weight: 700; color: var(--primary); white-space: nowrap; }
+    .line-name { flex: 1; font-weight: 800; font-size: 1rem; min-width: 0; }
+    .line-name small { display: block; color: var(--muted); font-weight: 500; font-size: 0.85rem; }
+    .line-price { font-family: var(--title-font); font-size: 1.1rem; white-space: nowrap; }
     .qty { display: flex; align-items: center; gap: 6px; }
     .qty button {
-      width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--border);
-      background: #fff; font-size: 1.1rem; font-weight: 700; line-height: 1;
+      width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border-strong);
+      background: var(--surface2); font-size: 1.2rem; font-weight: 800;
     }
-    .qty span { min-width: 22px; text-align: center; font-weight: 700; }
-    .note-input { margin-top: 8px; padding: 8px 10px !important; font-size: 0.88rem !important; }
-    .note-tag { color: var(--accent); font-size: 0.82rem; font-style: italic; }
-
-    /* PLATOS */
-    .plate-bar { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-top: 8px; scrollbar-width: none; }
-    .plate-bar::-webkit-scrollbar { display: none; }
-    .plate-bar-label { font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
-    .plate-chip {
-      min-width: 40px; padding: 7px 12px; border-radius: 20px; border: 2px solid var(--accent);
-      background: var(--surface); color: var(--accent); font-weight: 700; font-size: 0.85rem; white-space: nowrap;
-    }
-    .plate-chip.active { background: var(--accent); color: #fff; }
-    .plate-chip.plate-new { border-style: dashed; }
-    .plate-hint { font-size: 0.75rem; color: var(--muted); padding-top: 4px; }
-    .plate-header {
-      margin: 12px 0 2px; padding: 6px 10px; border-radius: 8px; background: #fdf0e6;
-      color: var(--accent); font-weight: 800; font-size: 0.9rem;
-    }
-    .plate-header:first-child { margin-top: 0; }
-    .line-bottom { display: flex; gap: 8px; margin-top: 8px; }
-    .line-bottom .note-input { margin-top: 0; flex: 1; min-width: 0; }
+    .qty span { min-width: 22px; text-align: center; font-family: var(--title-font); font-size: 1.2rem; }
+    .line-bottom { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
     .plate-select {
-      padding: 6px; border: 2px solid var(--accent); border-radius: 10px; background: #fff;
-      font-weight: 700; color: var(--accent); font-size: 0.85rem;
+      min-height: 38px; padding: 6px 10px; border-radius: 10px; border: 1.5px solid var(--wood);
+      background: var(--surface2); color: var(--wood-text); font-weight: 800; font-size: 0.85rem;
     }
-    .total-row {
-      display: flex; justify-content: space-between; font-size: 1.1rem;
-      font-weight: 700; padding-top: 12px; color: var(--primary);
-    }
+    .note-btn { min-height: 38px; padding: 6px 12px; border-radius: 10px; border: 1px dashed var(--border-strong); color: var(--muted); font-weight: 700; font-size: 0.85rem; }
+    .note-input { flex: 1; min-width: 0; min-height: 38px !important; padding: 8px 10px !important; font-size: 0.9rem !important; }
+    .note-tag { display: block; color: var(--warning); font-size: 0.82rem; font-style: italic; font-weight: 500; }
+    .total-row { display: flex; justify-content: space-between; align-items: baseline; padding-top: 12px; }
+    .total-row .title { font-size: 1.5rem; }
+    details.card summary { list-style: none; cursor: pointer; }
+    details.card summary::-webkit-details-marker { display: none; }
+    details.card summary .card-head { margin-bottom: 0; }
+    details.card[open] summary .card-head { margin-bottom: 6px; }
+    .chevron { color: var(--muted); transition: transform 0.2s; display: inline-block; }
+    details[open] .chevron { transform: rotate(180deg); }
 
-    /* FAB / TOAST */
-    #fab-carrito {
-      position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); right: 16px;
-      background: var(--accent); color: #fff; border: none; border-radius: 50px;
-      padding: 14px 20px; font-size: 1rem; font-weight: 700;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.25); display: flex; align-items: center; gap: 8px; z-index: 200;
+    /* ---------- Barra inferior ---------- */
+    .bottom-bar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+      padding: 10px 14px calc(12px + var(--safe-bottom));
+      background: linear-gradient(to top, var(--bg) 70%, rgba(10,10,10,0));
     }
-    #fab-badge {
-      background: #fff; color: var(--accent); border-radius: 12px; min-width: 24px; height: 24px;
-      display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 900; padding: 0 6px;
+    .bottom-bar .inner { max-width: 720px; margin: 0 auto; display: grid; gap: 6px; }
+    .cart-bar { justify-content: space-between; animation: pop 0.25s ease-out; }
+    .cart-bar .count {
+      background: rgba(255,255,255,0.2); border-radius: 999px; min-width: 30px; height: 30px; padding: 0 8px;
+      display: grid; place-items: center; font-weight: 800;
     }
+    @keyframes pop { 0% { transform: scale(0.96); } 60% { transform: scale(1.02); } 100% { transform: scale(1); } }
+
+    /* ---------- Avisos ---------- */
     #toast {
-      position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(40px);
-      background: #2c3e50; color: #fff; padding: 12px 22px; border-radius: 24px; opacity: 0;
-      pointer-events: none; font-size: 0.9rem; transition: transform 0.3s ease, opacity 0.3s ease;
-      z-index: 999; max-width: 90vw; text-align: center;
+      position: fixed; left: 50%; bottom: calc(96px + var(--safe-bottom)); z-index: 400;
+      transform: translateX(-50%) translateY(30px); opacity: 0; pointer-events: none;
+      background: var(--surface3); color: var(--text); border: 1px solid var(--border-strong);
+      padding: 12px 18px; border-radius: 14px; font-weight: 700; font-size: 0.9rem;
+      transition: transform 0.25s ease, opacity 0.25s ease; max-width: 90vw; text-align: center;
     }
     #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-    #toast.success { background: var(--success); }
-    #toast.error { background: var(--danger); }
+    #toast.success { background: var(--success); border-color: var(--success); color: #fff; }
+    #toast.error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+    .done-overlay {
+      position: fixed; inset: 0; z-index: 500; background: rgba(10,10,10,0.92);
+      display: grid; place-items: center; text-align: center; padding: 24px; animation: fade 0.2s ease-out;
+    }
+    .done-check {
+      width: 96px; height: 96px; border-radius: 50%; background: var(--success); display: grid; place-items: center;
+      font-size: 3rem; margin: 0 auto 16px; animation: pop 0.35s ease-out;
+    }
+    .done-overlay h2 { font-family: var(--title-font); font-size: 2rem; font-stretch: condensed; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
   </style>
 </head>
 <body>
 
 <header>
   <div class="header-row">
-    <div>
-      <h1>🌮 PROVA</h1>
-      <small>Toma de pedidos</small>
+    <img class="logo" src="/logo.png" alt="PRÖVA México" onerror="this.hidden = true" />
+    <div class="brand">
+      <span class="brand-name">PRÖVA</span>
+      <span class="brand-script">México</span>
     </div>
-    <div id="header-mesa"></div>
+    <div id="header-mesa" hidden></div>
   </div>
-  <div class="steps" id="steps">
-    <div class="step active" id="step1">1. Mesa</div>
-    <div class="step" id="step2">2. Platillos</div>
-    <div class="step" id="step3">3. Enviar</div>
+  <div class="steps" id="steps" hidden>
+    <div class="step" id="step1">Mesa</div>
+    <div class="step" id="step2">Platillos</div>
+    <div class="step" id="step3">Enviar</div>
   </div>
 </header>
-<div id="offline" hidden>Sin conexión con la caja. Revisa el WiFi.</div>
+<div id="offline" hidden>Sin conexión con la caja. Revisa el WiFi del local.</div>
 
 <main>
   <!-- ============ PIN ============ -->
   <section class="screen" id="screen-pin" hidden>
-    <div class="card">
-      <div class="card-header">Ingresa el PIN de meseros</div>
-      <div class="card-body">
-        <p class="muted" style="margin-bottom:12px">El PIN aparece en la barra inferior de la caja.</p>
-        <form id="pin-form">
-          <input id="pin-input" class="pin-input" type="password" inputmode="numeric"
-                 autocomplete="off" maxlength="8" placeholder="••••" />
-          <button class="btn btn-primary" type="submit">Entrar</button>
-        </form>
-      </div>
+    <div class="pin-card">
+      <img class="pin-logo" src="/logo.png" alt="" onerror="this.hidden = true" />
+      <h2>¡Hola! 👋</h2>
+      <p class="muted">Ingresa el PIN de meseros.<br />Lo ves en la caja, botón «Meseros».</p>
+      <form id="pin-form">
+        <input id="pin-input" class="pin-input" type="password" inputmode="numeric"
+               autocomplete="off" maxlength="8" placeholder="••••" />
+        <button class="btn btn-primary btn-big" type="submit">Entrar</button>
+      </form>
     </div>
   </section>
 
   <!-- ============ MESAS ============ -->
   <section class="screen" id="screen-mesa" hidden>
-    <div class="card">
-      <div class="card-header">
-        <span>Selecciona la mesa</span>
-        <button class="btn btn-small" id="btn-refresh" type="button">↻ Actualizar</button>
-      </div>
-      <div class="card-body">
-        <div class="mesa-grid" id="mesa-grid"><p class="muted">Cargando mesas...</p></div>
-        <button class="btn btn-outline" id="btn-new-mesa" type="button">＋ Nueva mesa / cliente</button>
-        <form class="new-mesa-form" id="new-mesa-form" hidden>
-          <input id="new-mesa-name" type="text" maxlength="40" placeholder="Ej: Mesa 5, Juan, Terraza 2" />
-          <div class="segmented" id="new-mesa-type">
-            <button type="button" class="active" data-tipo="En el local">🍽️ En el local</button>
-            <button type="button" data-tipo="Para llevar">🛵 Para llevar</button>
-          </div>
-          <button class="btn btn-primary" type="submit" style="margin-top:0">Crear y tomar pedido</button>
-        </form>
-      </div>
+    <div class="section-title">
+      <h2>MESAS</h2>
+      <button class="icon-btn" id="btn-refresh" type="button" aria-label="Actualizar">↻</button>
     </div>
+    <div class="mesa-grid" id="mesa-grid"><p class="muted">Cargando mesas…</p></div>
   </section>
 
   <!-- ============ MENU ============ -->
   <section class="screen" id="screen-menu" hidden>
     <div class="sticky-tools">
-      <input id="search" type="search" placeholder="🔍 Buscar: taco, horchata, birria..." autocomplete="off" />
-      <div class="cat-tabs" id="cat-tabs"></div>
+      <div class="mesa-bar">
+        <button class="icon-btn" type="button" data-go="screen-mesa" aria-label="Cambiar de mesa">←</button>
+        <span class="title" id="menu-mesa"></span>
+      </div>
+      <input id="search" type="search" placeholder="🔍  Buscar: taco, horchata, birria…" autocomplete="off" />
+      <div class="chips" id="cat-tabs"></div>
       <div class="plate-bar" id="plate-bar"></div>
       <div class="plate-hint" id="plate-hint"></div>
     </div>
     <div class="platillo-list" id="platillo-list"></div>
-    <button class="btn btn-outline" type="button" data-go="screen-mesa">← Cambiar de mesa</button>
   </section>
 
   <!-- ============ CARRITO ============ -->
   <section class="screen" id="screen-carrito" hidden>
+    <div class="section-title">
+      <h2 id="cart-title">PEDIDO</h2>
+      <button class="link-btn" type="button" data-go="screen-menu">＋ Agregar más</button>
+    </div>
     <div class="card">
-      <div class="card-header"><span>Nuevo para enviar</span><span id="cart-count"></span></div>
-      <div class="card-body" id="carrito-body"></div>
+      <div class="card-head"><h3>NUEVO PARA ENVIAR</h3><span class="muted" id="cart-count"></span></div>
+      <div id="carrito-body"></div>
     </div>
-    <div class="card" id="current-order-card" hidden>
-      <div class="card-header"><span>Ya pedido en esta mesa</span><span id="current-order-total"></span></div>
-      <div class="card-body" id="current-order-body"></div>
-    </div>
-    <button class="btn btn-outline" type="button" data-go="screen-menu">← Agregar más platillos</button>
-    <button class="btn btn-success" id="btn-enviar" type="button">✅ Enviar a la caja</button>
+    <details class="card" id="current-order-card" hidden>
+      <summary>
+        <div class="card-head">
+          <h3>YA PEDIDO EN LA MESA</h3>
+          <span class="muted"><span id="current-order-total"></span> <span class="chevron">▾</span></span>
+        </div>
+      </summary>
+      <div id="current-order-body"></div>
+    </details>
   </section>
 </main>
 
-<button id="fab-carrito" type="button" hidden>🛒 Ver pedido <span id="fab-badge">0</span></button>
+<!-- Barras inferiores: al alcance del pulgar -->
+<div class="bottom-bar" id="bar-mesas" hidden>
+  <div class="inner">
+    <button class="btn btn-primary btn-big" id="btn-new-mesa" type="button">＋ Nueva mesa o cliente</button>
+  </div>
+</div>
+<div class="bottom-bar" id="bar-menu" hidden>
+  <div class="inner">
+    <button class="btn btn-primary cart-bar" id="btn-ver-pedido" type="button">
+      <span class="count" id="fab-badge">0</span>
+      <span class="btn-big">Ver pedido</span>
+      <span class="btn-big" id="cart-bar-total"></span>
+    </button>
+  </div>
+</div>
+<div class="bottom-bar" id="bar-carrito" hidden>
+  <div class="inner">
+    <button class="btn btn-success btn-big" id="btn-enviar" type="button">Enviar a la caja</button>
+  </div>
+</div>
+
+<!-- Nueva mesa -->
+<div id="new-mesa-sheet" hidden>
+  <div class="sheet-backdrop" id="sheet-backdrop"></div>
+  <div class="sheet" role="dialog" aria-label="Nueva mesa">
+    <h3>NUEVA MESA O CLIENTE</h3>
+    <form id="new-mesa-form">
+      <div class="segmented" id="new-mesa-type">
+        <button type="button" class="active" data-tipo="En el local">🍽️ En el local</button>
+        <button type="button" data-tipo="Para llevar">🛵 Para llevar</button>
+      </div>
+      <div class="quick-tables" id="quick-tables"></div>
+      <input id="new-mesa-name" type="text" maxlength="40" placeholder="O escribe: Juan, Terraza 2…" />
+      <button class="btn btn-primary btn-big" type="submit">Crear y tomar pedido</button>
+      <button class="link-btn" type="button" id="sheet-cancel">Cancelar</button>
+    </form>
+  </div>
+</div>
+
+<div class="done-overlay" id="done-overlay" hidden>
+  <div>
+    <div class="done-check">✓</div>
+    <h2>¡ENVIADO A LA CAJA!</h2>
+    <p class="muted" id="done-detail"></p>
+  </div>
+</div>
+
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -314,7 +450,7 @@
     categoria: null,
     plato: 1,          // plato al que van los platillos que se tocan (0 = sin plato)
     platosMesa: [],    // platos que la mesa ya tiene en la caja
-    ajustes: { categorias_sin_plato: [], max_platos: 30 },
+    ajustes: { categorias_sin_plato: [], max_platos: 30, iconos: { categorias: {}, productos: {} }, numero_mesas: 8 },
     newMesaTipo: 'En el local',
     screen: 'screen-mesa',
   };
@@ -338,13 +474,16 @@
   }
 
   const money = (n) => 'Bs ' + Number(n).toFixed(2);
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const iconoCategoria = (c) => (state.ajustes.iconos?.categorias || {})[c] || '🍽️';
+  const iconoProducto = (p, c) => (state.ajustes.iconos?.productos || {})[p] || iconoCategoria(c);
+  const vibrate = (ms) => { if (navigator.vibrate) navigator.vibrate(ms); };
 
   // ============ PERSISTENCIA LOCAL ============
   function save() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        pin: state.pin, mesa: state.mesa, cart: state.cart, requestId: state.requestId,
-        plato: state.plato,
+        pin: state.pin, mesa: state.mesa, cart: state.cart, requestId: state.requestId, plato: state.plato,
       }));
     } catch (e) { /* modo privado: se sigue sin guardar */ }
   }
@@ -406,10 +545,13 @@
     const step = { 'screen-mesa': 1, 'screen-menu': 2, 'screen-carrito': 3 }[screen] || 0;
     $('steps').hidden = step === 0;
     [1, 2, 3].forEach((i) => { $('step' + i).className = 'step' + (i < step ? ' done' : i === step ? ' active' : ''); });
+    $('header-mesa').hidden = !state.mesa || step === 0;
     $('header-mesa').textContent = state.mesa ? '🍽️ ' + state.mesa : '';
-    updateFab();
+    $('bar-mesas').hidden = screen !== 'screen-mesa';
+    $('bar-carrito').hidden = screen !== 'screen-carrito';
+    updateCartBar();
     if (screen === 'screen-mesa') loadMesas();
-    if (screen === 'screen-menu') { renderMenu(); loadPlatosMesa(); }
+    if (screen === 'screen-menu') { $('menu-mesa').textContent = state.mesa; renderMenu(); loadPlatosMesa(); }
     if (screen === 'screen-carrito') { renderCart(); loadCurrentOrder(); }
     window.scrollTo(0, 0);
   }
@@ -427,6 +569,7 @@
       show(state.mesa ? 'screen-menu' : 'screen-mesa');
     } catch (err) {
       toast(err.message, 'error');
+      vibrate([40, 60, 40]);
     }
   });
 
@@ -442,25 +585,36 @@
     }
   }
 
+  const formatMinutos = (m) => (m < 1 ? 'recién' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`);
+
   function renderMesas() {
     const grid = $('mesa-grid');
-    const open = state.mesas.filter((m) => !m.pagado);
     if (!state.mesas.length) {
-      grid.replaceChildren(h('p', { class: 'muted' }, 'No hay mesas abiertas. Crea una con el botón de abajo.'));
+      grid.replaceChildren(h('p', { class: 'muted center', style: 'grid-column: 1 / -1; padding: 30px 0' },
+        '🌮 No hay mesas abiertas.', h('br'), 'Crea una con el botón de abajo.'));
       return;
     }
-    const cards = [...open, ...state.mesas.filter((m) => m.pagado)].map((m) => h('button', {
-      type: 'button',
-      class: 'mesa-btn' + (m.nombre === state.mesa ? ' selected' : ''),
-      disabled: m.pagado,
-      onclick: () => selectMesa(m.nombre),
-    },
-      h('span', { class: 'mesa-icon' }, m.pagado ? '✅' : m.tipo === 'Para llevar' ? '🛵' : '🍽️'),
-      h('span', { class: 'mesa-num' }, m.numero),
-      h('span', { class: 'mesa-name' }, m.nombre),
-      h('span', { class: 'mesa-meta' }, m.pagado ? 'Pagado' : `${m.items} ítems · ${money(m.total)}`),
-    ));
-    grid.replaceChildren(...cards);
+    const ordenadas = [...state.mesas.filter((m) => !m.pagado), ...state.mesas.filter((m) => m.pagado)];
+    grid.replaceChildren(...ordenadas.map((m) => {
+      const minutos = m.minutos || 0;
+      const nivel = minutos >= 40 ? ' late' : minutos >= 20 ? ' warn' : '';
+      const meta = [m.tipo === 'Para llevar' ? '🛵 Para llevar' : null, `${m.items} ${m.items === 1 ? 'ítem' : 'ítems'}`]
+        .filter(Boolean).join(' · ');
+      return h('button', {
+        type: 'button',
+        class: 'mesa-card' + (m.nombre === state.mesa ? ' selected' : ''),
+        disabled: m.pagado,
+        onclick: () => selectMesa(m.nombre),
+      },
+        h('div', { class: 'mesa-top' },
+          h('span', { class: 'mesa-num' }, m.numero),
+          m.pagado ? h('span', { class: 'badge paid' }, '✔ Cobrado')
+                   : h('span', { class: 'badge' + nivel }, '⏱ ' + formatMinutos(minutos))),
+        h('span', { class: 'mesa-name' }, m.nombre),
+        h('span', { class: 'mesa-meta' }, meta),
+        h('span', { class: 'mesa-total' }, money(m.total)),
+      );
+    }));
   }
 
   function selectMesa(nombre) {
@@ -476,32 +630,55 @@
     show('screen-menu');
   }
 
-  $('btn-refresh').addEventListener('click', loadMesas);
-  $('btn-new-mesa').addEventListener('click', () => {
-    $('new-mesa-form').hidden = false;
-    $('btn-new-mesa').hidden = true;
-    $('new-mesa-name').focus();
-  });
+  $('btn-refresh').addEventListener('click', () => { vibrate(10); loadMesas(); });
+
+  function openNewMesa() {
+    const ocupadas = new Set(state.mesas.map((m) => normalize(m.nombre)));
+    const total = Number(state.ajustes.numero_mesas) || 0;
+    const botones = [];
+    for (let i = 1; i <= total; i++) {
+      const nombre = `Mesa ${i}`;
+      botones.push(h('button', {
+        type: 'button', disabled: ocupadas.has(normalize(nombre)),
+        onclick: () => createMesa(nombre, 'En el local'),
+      }, nombre));
+    }
+    $('quick-tables').replaceChildren(...botones);
+    $('quick-tables').hidden = !botones.length;
+    $('new-mesa-sheet').hidden = false;
+  }
+
+  function closeNewMesa() {
+    $('new-mesa-sheet').hidden = true;
+    $('new-mesa-name').value = '';
+  }
+
+  async function createMesa(nombre, tipo) {
+    try {
+      const data = await api('/api/mesas', { method: 'POST', body: JSON.stringify({ nombre, tipo }) });
+      closeNewMesa();
+      toast(`Mesa ${data.mesa.numero} abierta`, 'success');
+      vibrate(20);
+      selectMesa(data.mesa.nombre);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  $('btn-new-mesa').addEventListener('click', openNewMesa);
+  $('sheet-backdrop').addEventListener('click', closeNewMesa);
+  $('sheet-cancel').addEventListener('click', closeNewMesa);
   $('new-mesa-type').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-tipo]');
     if (!btn) return;
     state.newMesaTipo = btn.dataset.tipo;
     $('new-mesa-type').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
   });
-  $('new-mesa-form').addEventListener('submit', async (e) => {
+  $('new-mesa-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const nombre = $('new-mesa-name').value.trim();
-    if (!nombre) return toast('Escribe el nombre de la mesa', 'error');
-    try {
-      const data = await api('/api/mesas', { method: 'POST', body: JSON.stringify({ nombre, tipo: state.newMesaTipo }) });
-      $('new-mesa-name').value = '';
-      $('new-mesa-form').hidden = true;
-      $('btn-new-mesa').hidden = false;
-      toast(`Mesa ${data.mesa.numero} creada`, 'success');
-      selectMesa(data.mesa.nombre);
-    } catch (err) {
-      toast(err.message, 'error');
-    }
+    if (!nombre) return toast('Elige una mesa o escribe un nombre', 'error');
+    createMesa(nombre, state.newMesaTipo);
   });
 
   // ============ MENU ============
@@ -509,7 +686,7 @@
     try {
       const [menu, ajustes] = await Promise.all([api('/api/menu'), api('/api/ajustes').catch(() => null)]);
       state.menu = menu;
-      if (ajustes) state.ajustes = ajustes;
+      if (ajustes) state.ajustes = { ...state.ajustes, ...ajustes };
     } catch (e) {
       if (e.status !== 401) toast('No se pudo cargar el menú: ' + e.message, 'error');
     }
@@ -518,11 +695,12 @@
   function renderMenu() {
     const categorias = Object.keys(state.menu);
     if (!categorias.includes(state.categoria)) state.categoria = categorias[0] || null;
+    const buscando = Boolean($('search').value.trim());
     $('cat-tabs').replaceChildren(...categorias.map((cat) => h('button', {
       type: 'button',
-      class: 'cat-tab' + (cat === state.categoria ? ' active' : ''),
-      onclick: () => { state.categoria = cat; $('search').value = ''; renderMenu(); },
-    }, cat)));
+      class: 'chip' + (cat === state.categoria && !buscando ? ' active' : ''),
+      onclick: () => { state.categoria = cat; $('search').value = ''; renderMenu(); window.scrollTo(0, 0); },
+    }, `${iconoCategoria(cat)} ${cat}`)));
     renderPlateBar();
     renderPlatillos();
   }
@@ -544,6 +722,7 @@
   function elegirPlato(plato) {
     state.plato = plato;
     save();
+    vibrate(10);
     renderPlateBar();
     renderPlatillos();
   }
@@ -557,9 +736,9 @@
       onclick: () => elegirPlato(plato),
     }, text);
     $('plate-bar').replaceChildren(
-      h('span', { class: 'plate-bar-label' }, '🍽️ Plato:'),
+      h('span', { class: 'plate-bar-label' }, 'PLATO'),
       ...platos.map((p) => chip(p, String(p))),
-      siguiente <= state.ajustes.max_platos ? chip(siguiente, '+ Nuevo', ' plate-new') : null,
+      siguiente <= state.ajustes.max_platos ? chip(siguiente, '＋ Nuevo', ' plate-new') : null,
       chip(0, 'Sin plato'),
     );
     $('plate-hint').textContent = state.plato
@@ -588,47 +767,50 @@
     return [...grupos.entries()].sort(([a], [b]) => (a === 0) - (b === 0) || a - b);
   }
 
-  const plateHeader = (plato) =>
-    h('div', { class: 'plate-header' }, plato ? `🍽️ Plato ${plato}` : 'Sin plato (bebidas y para compartir)');
-
-  const normalize = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const plateHeader = (plato, subtotal) => h('div', { class: 'plate-header' },
+    h('span', {}, plato ? `🍽️ PLATO ${plato}` : 'SIN PLATO · BEBIDAS'),
+    subtotal !== undefined ? h('span', {}, money(subtotal)) : null);
 
   function renderPlatillos() {
     const list = $('platillo-list');
-    const query = normalize($('search').value.trim());
+    const tokens = normalize($('search').value.trim()).split(/\s+/).filter(Boolean);
     const cards = [];
     for (const [categoria, platillos] of Object.entries(state.menu)) {
-      if (!query && categoria !== state.categoria) continue;
+      if (!tokens.length && categoria !== state.categoria) continue;
       for (const [platillo, variantes] of Object.entries(platillos)) {
         const entries = Object.entries(variantes).filter(([variante]) =>
-          !query || normalize(`${platillo} ${variante}`).includes(query));
+          !tokens.length || tokens.every((t) => normalize(`${platillo} ${variante} ${categoria}`).includes(t)));
         if (!entries.length) continue;
         cards.push(h('div', { class: 'platillo-card' },
-          h('div', { class: 'platillo-name' }, platillo,
-            query ? h('span', { class: 'platillo-cat' }, categoria) : null),
+          h('div', { class: 'platillo-head' },
+            h('span', { class: 'platillo-icon' }, iconoProducto(platillo, categoria)),
+            h('div', {},
+              h('div', { class: 'platillo-name' }, platillo),
+              tokens.length ? h('span', { class: 'platillo-cat' }, categoria) : null)),
           h('div', { class: 'variante-list' }, entries.map(([variante, precio]) => {
             const count = unitsFor(categoria, platillo, variante);
             return h('button', {
               type: 'button', class: 'variante-btn',
               onclick: (e) => addToCart(categoria, platillo, variante, precio, e.currentTarget),
             },
-              variante, h('span', { class: 'precio-tag' }, money(precio)),
+              variante, h('span', { class: 'precio-tag' }, Number(precio).toFixed(0)),
               count ? h('span', { class: 'count-badge' }, count) : null);
           })),
         ));
       }
     }
     if (!cards.length) {
-      cards.push(h('p', { class: 'muted center' },
-        Object.keys(state.menu).length ? 'Sin resultados.' : 'Menú no disponible.'));
+      cards.push(h('p', { class: 'muted center', style: 'padding: 30px 0' },
+        Object.keys(state.menu).length ? 'Sin resultados. Prueba con otra palabra.' : 'Menú no disponible.'));
     }
     list.replaceChildren(...cards);
   }
 
-  $('search').addEventListener('input', renderPlatillos);
+  $('search').addEventListener('input', () => { renderMenu(); });
 
   // ============ CARRITO ============
   const cartUnits = () => state.cart.reduce((n, l) => n + l.cantidad, 0);
+  const cartTotal = () => state.cart.reduce((sum, l) => sum + l.precio * l.cantidad, 0);
   // Cuantos hay en el carrito para el plato elegido
   const unitsFor = (categoria, platillo, variante) => state.cart
     .filter((l) => l.categoria === categoria && l.platillo === platillo && l.variante === variante
@@ -638,7 +820,7 @@
   function cartChanged() {
     state.requestId = null;
     save();
-    updateFab();
+    updateCartBar();
   }
 
   const sameLine = (a, b) => a.categoria === b.categoria && a.platillo === b.platillo
@@ -650,38 +832,43 @@
     if (line) line.cantidad += 1;
     else state.cart.push(nueva);
     cartChanged();
-    if (navigator.vibrate) navigator.vibrate(15);
+    vibrate(15);
     btn.classList.add('flash');
     setTimeout(renderPlatillos, 180);
   }
 
-  function updateFab() {
+  function updateCartBar() {
     const units = cartUnits();
     $('fab-badge').textContent = units;
-    $('fab-carrito').hidden = !(units > 0 && state.screen === 'screen-menu');
+    $('cart-bar-total').textContent = money(cartTotal());
+    $('bar-menu').hidden = !(units > 0 && state.screen === 'screen-menu');
+    $('btn-enviar').textContent = units ? `Enviar a la caja · ${money(cartTotal())}` : 'Enviar a la caja';
   }
 
   function renderCart() {
     const body = $('carrito-body');
     const units = cartUnits();
-    $('cart-count').textContent = units ? `${units} ítem(s)` : '';
+    $('cart-title').textContent = state.mesa ? state.mesa.toUpperCase() : 'PEDIDO';
+    $('cart-count').textContent = units ? `${units} ${units === 1 ? 'ítem' : 'ítems'}` : '';
     $('btn-enviar').disabled = !units;
+    updateCartBar();
     if (!units) {
-      body.replaceChildren(h('p', { class: 'muted center' }, '🛒 Todavía no agregaste platillos.'));
+      body.replaceChildren(h('p', { class: 'muted center', style: 'padding: 20px 0' },
+        '🛒 Todavía no agregaste platillos.'));
       return;
     }
-    const total = state.cart.reduce((sum, l) => sum + l.precio * l.cantidad, 0);
     const platos = platosEnUso();
     const maxOpcion = Math.min((platos.length ? Math.max(...platos) : 0) + 1, state.ajustes.max_platos);
     const conPlatos = state.cart.some((l) => l.plato);
     const rows = [];
     for (const [plato, lineas] of agruparPorPlato(state.cart)) {
-      if (conPlatos) rows.push(plateHeader(plato));
+      if (conPlatos) rows.push(plateHeader(plato, lineas.reduce((s, [l]) => s + l.precio * l.cantidad, 0)));
       for (const [line, idx] of lineas) rows.push(renderCartLine(line, idx, maxOpcion));
     }
     body.replaceChildren(
       ...rows,
-      h('div', { class: 'total-row' }, h('span', {}, 'Total a enviar'), h('span', {}, money(total))),
+      h('div', { class: 'total-row' }, h('span', { class: 'muted' }, 'Total a enviar'),
+        h('span', { class: 'title' }, money(cartTotal()))),
     );
   }
 
@@ -697,24 +884,28 @@
         onchange: (e) => moveLineToPlate(idx, Number(e.target.value)),
       }, opciones);
     }
+    const editandoNota = line.nota || line._nota;
+    const nota = editandoNota
+      ? h('input', {
+          type: 'text', class: 'note-input', maxLength: 120, value: line.nota || '',
+          placeholder: 'sin cebolla, bien cocido…',
+          onchange: (e) => { line.nota = e.target.value.trim(); cartChanged(); },
+        })
+      : h('button', {
+          type: 'button', class: 'note-btn',
+          onclick: () => { line._nota = true; renderCart(); },
+        }, '📝 Nota');
     return h('div', { class: 'line' },
       h('div', { class: 'line-top' },
-        h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
         h('div', { class: 'qty' },
           h('button', { type: 'button', 'aria-label': 'Quitar uno', onclick: () => changeQty(idx, -1) }, '−'),
           h('span', {}, line.cantidad),
           h('button', { type: 'button', 'aria-label': 'Agregar uno', onclick: () => changeQty(idx, 1) }, '+'),
         ),
+        h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
         h('div', { class: 'line-price' }, money(line.precio * line.cantidad)),
       ),
-      h('div', { class: 'line-bottom' },
-        plateSelect,
-        h('input', {
-          type: 'text', class: 'note-input', maxLength: 120, value: line.nota,
-          placeholder: '📝 Nota (sin cebolla...)',
-          onchange: (e) => { line.nota = e.target.value.trim(); cartChanged(); },
-        }),
-      ),
+      h('div', { class: 'line-bottom' }, plateSelect, nota),
     );
   }
 
@@ -735,6 +926,7 @@
     const line = state.cart[idx];
     line.cantidad += delta;
     if (line.cantidad <= 0) state.cart.splice(idx, 1);
+    vibrate(10);
     cartChanged();
     renderCart();
   }
@@ -780,35 +972,39 @@
     if (!state.cart.length || !state.mesa) return;
     const btn = $('btn-enviar');
     btn.disabled = true;
-    btn.textContent = 'Enviando...';
+    btn.textContent = 'Enviando…';
     // Mismo id en cada reintento: si la caja ya lo recibio no se duplica
     if (!state.requestId) {
       state.requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       save();
     }
+    const items = state.cart.map(({ categoria, platillo, variante, nota, cantidad, plato }) =>
+      ({ categoria, platillo, variante, nota, cantidad, plato }));
     try {
       const data = await api('/api/pedido/' + encodeURIComponent(state.mesa) + '/items', {
         method: 'POST',
-        body: JSON.stringify({ request_id: state.requestId, items: state.cart }),
+        body: JSON.stringify({ request_id: state.requestId, items }),
       });
-      toast('✅ ' + data.mensaje, 'success');
+      vibrate([20, 40, 20]);
+      $('done-detail').textContent = data.mensaje;
+      $('done-overlay').hidden = false;
       state.cart = [];
       state.requestId = null;
-      const mesa = state.mesa;
       state.mesa = null;
       save();
-      setTimeout(() => { if (!state.mesa || state.mesa === mesa) show('screen-mesa'); }, 1200);
+      setTimeout(() => { $('done-overlay').hidden = true; show('screen-mesa'); }, 1500);
     } catch (e) {
       toast('⚠️ ' + e.message + (e.status === 0 ? '. Toca enviar de nuevo.' : ''), 'error');
+      vibrate([40, 60, 40]);
     } finally {
       btn.disabled = false;
-      btn.textContent = '✅ Enviar a la caja';
+      updateCartBar();
     }
   });
 
   document.querySelectorAll('[data-go]').forEach((btn) =>
     btn.addEventListener('click', () => show(btn.dataset.go)));
-  $('fab-carrito').addEventListener('click', () => show('screen-carrito'));
+  $('btn-ver-pedido').addEventListener('click', () => show('screen-carrito'));
 
   // ============ TOAST ============
   let toastTimer = null;
