@@ -139,3 +139,19 @@ def test_logo_is_public_and_tables_include_waiting_minutes(client, manager):
     assert ajustes["iconos"]["categorias"]["Platillos"] == "\U0001F32E"
     assert ajustes["iconos"]["productos"]["Taco"] == "\U0001F32E"
     assert ajustes["numero_mesas"] == 13
+
+
+def test_real_server_does_not_log_every_request(manager, menu_file, caplog):
+    import logging
+    import urllib.request
+
+    app = create_app(manager, MenuData(menu_file), PIN)
+    server = WaiterServer(app)
+    port = server.start(port=5770)
+    try:
+        with caplog.at_level(logging.INFO, logger="werkzeug"):
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/api/mesas", headers={"X-PIN": PIN})
+            assert urllib.request.urlopen(request, timeout=5).status == 200
+        assert not [r for r in caplog.records if "/api/mesas" in r.getMessage()]
+    finally:
+        server.stop()

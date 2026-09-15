@@ -299,6 +299,22 @@ def _listen_exclusive(port: int) -> socket.socket:
     return sock
 
 
+def _quiet_request_handler():
+    from werkzeug.serving import WSGIRequestHandler
+
+    class QuietRequestHandler(WSGIRequestHandler):
+        """
+        No escribe una linea por cada peticion. Los celulares consultan la caja
+        cada pocos segundos y la consola se llenaba (y se abria sola en el IDE).
+        Los errores del servidor se siguen registrando.
+        """
+
+        def log_request(self, code="-", size="-"):
+            pass
+
+    return QuietRequestHandler
+
+
 class WaiterServer:
     """Levanta el servidor en un hilo daemon; si el puerto esta ocupado prueba los siguientes."""
 
@@ -322,7 +338,7 @@ class WaiterServer:
         try:
             # Con fd, werkzeug usa el socket ya abierto y no llama a sys.exit si falla
             self._server = make_server("0.0.0.0", candidate, self.app, threaded=True,
-                                       fd=sock.fileno())
+                                       request_handler=_quiet_request_handler(), fd=sock.fileno())
         finally:
             sock.close()
         self.port = candidate

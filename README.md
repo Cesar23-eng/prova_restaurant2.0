@@ -10,6 +10,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Para abrir la caja **sin ventana de consola**, doble clic en `PROVA.vbs` (puedes crear
+un acceso directo en el escritorio). También sirve desde la terminal:
+
+```bash
+.venv\Scripts\pythonw.exe main.py
+```
+
+Si algo falla con `pythonw`, los errores quedan en `data/errores.log` y la app avisa en pantalla.
+
 Para compilar el ejecutable:
 
 ```bash
