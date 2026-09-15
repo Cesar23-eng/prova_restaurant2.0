@@ -13,6 +13,11 @@ from PyQt6.QtWidgets import (
 )
 
 from models.order import MAX_PLATES, ORDER_TYPE_LOCAL, ORDER_TYPE_TAKEAWAY, group_lines_by_plate, plate_label
+from utils import tickets
+from utils.config import save_config_value
+from utils.printer import (
+    PrinterError, TicketPrinter, available_printers, default_printer, looks_thermal,
+)
 from views.widgets import make_button, make_label, money, repolish, set_prop
 
 
@@ -796,13 +801,12 @@ class DaySummaryDialog(QDialog):
         self.kpi_labels["orders"].setText(str(self.summary["orders"]))
         self.kpi_labels["cash_net"].setText(money(self.summary["cash_net"]))
         self.kpi_labels["qr_net"].setText(money(self.summary["qr_net"]))
-        self.html = day_summary_html(self.summary, label, self.local_name)
         self.browser.setHtml(day_summary_html(self.summary, label, self.local_name, self.colors))
 
     def print_summary(self):
         parent = self.parent()
-        if parent is not None and hasattr(parent, "print_html"):
-            parent.print_html(self.html)
+        if parent is not None and hasattr(parent, "print_day_summary"):
+            parent.print_day_summary(self.summary, self.selected_date().strftime("%d/%m/%Y"))
 
     def open_excel(self):
         date = self.selected_date()
@@ -813,3 +817,127 @@ class DaySummaryDialog(QDialog):
             QMessageBox.information(self, "Sin Excel", "No hay Excel de ventas para esa jornada.")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+
+# ---------------------------------------------------------------------------
+#  Impresora de tickets
+# ---------------------------------------------------------------------------
+class PrinterDialog(QDialog):
+    """Elegir la impresora de tickets (Epson TM-T20III), el modo y el ancho del papel."""
+
+    MODES = (
+        ("auto", "Automático (ESC/POS si es impresora de tickets)"),
+        ("escpos", "Térmica ESC/POS (Epson TM-T20III y similares)"),
+        ("windows", "Impresora común de Windows"),
+    )
+    PAPERS = ((80, "80 mm · 48 columnas"), (58, "58 mm · 32 columnas"))
+    FONT_SIZES = (("normal", "Normal (recomendada): platillos de 3 mm, platos en alto doble"),
+                  ("grande", "Grande: platillos en alto doble, para leer de lejos"))
+
+    def __init__(self, config: dict, root: str, local_name: str, parent=None, printers=None, default=None):
+        super().__init__(parent)
+        self.config = config
+        self.root = root
+        self.local_name = local_name
+        self.printers = available_printers() if printers is None else list(printers)
+        self.default = default_printer() if default is None else default
+        self.setWindowTitle("Impresora de tickets")
+        self.setMinimumWidth(520)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = _dialog_layout(
+            self, "IMPRESORA DE TICKETS",
+            "La comanda y la cuenta se imprimen directo, sin preguntar. Para la Epson TM-T20III "
+            "usa ESC/POS con papel de 80 mm: letra nativa de la impresora y corte automático.")
+
+        layout.addWidget(make_label("Impresora", "muted"))
+        self.printer_combo = QComboBox()
+        self.printer_combo.addItem("Automática (detectar la Epson)", "")
+        for name in self.printers:
+            tags = []
+            if looks_thermal(name):
+                tags.append("tickets")
+            if name == self.default:
+                tags.append("predeterminada")
+            self.printer_combo.addItem(f"{name}   ({', '.join(tags)})" if tags else name, name)
+        index = self.printer_combo.findData(self.config.get("impresora_tickets", ""))
+        self.printer_combo.setCurrentIndex(max(0, index))
+        layout.addWidget(self.printer_combo)
+
+        layout.addWidget(make_label("Modo", "muted"))
+        self.mode_combo = QComboBox()
+        for value, text in self.MODES:
+            self.mode_combo.addItem(text, value)
+        self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(self.config.get("modo_impresion", "auto"))))
+        layout.addWidget(self.mode_combo)
+
+        layout.addWidget(make_label("Papel", "muted"))
+        self.paper_combo = QComboBox()
+        for value, text in self.PAPERS:
+            self.paper_combo.addItem(text, value)
+        self.paper_combo.setCurrentIndex(max(0, self.paper_combo.findData(int(self.config.get("ancho_papel_mm", 80)))))
+        layout.addWidget(self.paper_combo)
+
+        layout.addWidget(make_label("Letra de la comanda", "muted"))
+        self.font_combo = QComboBox()
+        for value, text in self.FONT_SIZES:
+            self.font_combo.addItem(text, value)
+        self.font_combo.setCurrentIndex(max(0, self.font_combo.findData(self.config.get("letra_comanda", "normal"))))
+        layout.addWidget(self.font_combo)
+
+        self.result_label = make_label("", "hint", wrap=True)
+        layout.addWidget(self.result_label)
+
+        buttons = QHBoxLayout()
+        self.test_btn = make_button("\U0001F5A8  Imprimir prueba", "secondaryButton", self.print_test)
+        buttons.addWidget(self.test_btn)
+        buttons.addStretch()
+        buttons.addWidget(make_button("Cancelar", "ghostButton", self.reject))
+        buttons.addWidget(make_button("Guardar", "primaryButton", self.save))
+        layout.addLayout(buttons)
+
+        for combo in (self.printer_combo, self.mode_combo, self.paper_combo, self.font_combo):
+            combo.currentIndexChanged.connect(lambda _i: self._update_summary())
+        self._update_summary()
+
+    def selection(self) -> dict:
+        return {
+            "impresora_tickets": self.printer_combo.currentData() or "",
+            "modo_impresion": self.mode_combo.currentData(),
+            "ancho_papel_mm": int(self.paper_combo.currentData()),
+            "letra_comanda": self.font_combo.currentData(),
+        }
+
+    def _printer_for_selection(self) -> TicketPrinter:
+        return TicketPrinter({**self.config, **self.selection()}, self.printers, self.default)
+
+    def _update_summary(self):
+        printer = self._printer_for_selection()
+        name = printer.printer_name()
+        if not name:
+            self.result_label.setText("No hay impresoras instaladas. Instala el driver de la Epson TM-T20III.")
+            self.test_btn.setEnabled(False)
+            return
+        self.test_btn.setEnabled(True)
+        mode = "ESC/POS (térmica)" if printer.mode_for(name) == "escpos" else "Windows"
+        text = f"Se usará: {name}  ·  {mode}  ·  {printer.columns} columnas"
+        if printer.mode_for(name) == "escpos" and not looks_thermal(name):
+            text += "\n⚠ Ese nombre no parece de una impresora de tickets: ESC/POS podría imprimir símbolos raros."
+        self.result_label.setText(text)
+
+    def print_test(self):
+        printer = self._printer_for_selection()
+        name = printer.printer_name()
+        try:
+            printer.print_ticket(tickets.test_ticket(self.local_name, name or "", printer.columns), "PROVA prueba")
+        except PrinterError as e:
+            self.result_label.setText(f"No se pudo imprimir: {e}")
+            return
+        self.result_label.setText(f"Prueba enviada a {name}. Revisa que las tildes y el corte salgan bien.")
+
+    def save(self):
+        for key, value in self.selection().items():
+            self.config[key] = value
+            save_config_value(key, value, self.root)
+        self.accept()

@@ -28,6 +28,13 @@ DEFAULT_CONFIG = {
     "numero_mesas": 13,
     # Productos que se piden por unidad y cocina arma por plato
     "productos_con_plato": ["Taco", "Taco con queso"],
+    # Impresora de tickets. Vacio = se detecta la Epson (o la predeterminada).
+    "impresora_tickets": "",
+    # "auto": ESC/POS si es impresora de tickets; "escpos" o "windows" para forzar
+    "modo_impresion": "auto",
+    "ancho_papel_mm": 80,
+    # "normal" (recomendada) o "grande" (platillos en alto doble)
+    "letra_comanda": "normal",
 }
 
 _config_lock = threading.Lock()

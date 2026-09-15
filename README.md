@@ -46,7 +46,8 @@ La PC del restaurante **no necesita Python**: se lleva un solo ejecutable.
      firmado): *Más información* → *Ejecutar de todas formas*.
    - El Firewall pregunta por la red: permitir en **redes privadas** para que entren
      los celulares.
-   - Configurar la impresora de comandas como predeterminada.
+   - Instalar el driver de la Epson TM-T20III y en la caja ir a **⋯ → Impresora de
+     tickets → Imprimir prueba**.
 5. Recomendado: reservar una IP fija para esa PC en el router del local, así la
    dirección que usan los meseros (`http://192.168.x.x:5000`) no cambia.
 
@@ -82,7 +83,7 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 | Agregar | Tocar la variante en el menú. Si no hay pedido abierto, pide crearlo. «Cantidad» multiplica el toque |
 | Buscar | `Ctrl+K`, escribir y `Enter` agrega si queda un solo resultado; `Esc` limpia |
 | Cobrar | **Cobrar** o `F9`. `F1` efectivo, `F2` QR, `F3` mixto; montos rápidos y cambio en grande |
-| Comanda de cocina | **🔔 Comanda** o `F8`: imprime solo lo nuevo. ⋯ → reimprimir completa |
+| Comanda de cocina | **🔔 Comanda** o `F8`: imprime directo solo lo nuevo. ⋯ → reimprimir completa |
 | Cuenta del cliente | **🧾 Cuenta** o `Ctrl+P` |
 | Cierre de caja | **Resumen del día**: total, efectivo y QR netos, cambio, motos, productos |
 
@@ -110,6 +111,29 @@ La lista se cambia con `productos_con_plato` en `config.json`.
 - **Comanda de cocina:** sale agrupada (`== PLATO 1 ==`, `== PLATO 2 ==`, `== SIN PLATO ==`).
   Si se agregan tacos a un plato que cocina ya recibió, el encabezado dice *(agregar)*.
 - La cuenta del cliente y el Excel suman las líneas sin separarlas por plato.
+
+## Impresión (Epson TM-T20III)
+
+La comanda, la cuenta y el cierre de caja se imprimen **directo, sin diálogo**, en la
+impresora de tickets. Con la Epson TM-T20III se usa **ESC/POS**, el lenguaje nativo de
+la impresora: letra propia de la Epson, tildes y ñ correctas, y corte automático.
+
+| Parte | Tamaño en papel de 80 mm |
+| --- | --- |
+| Platillos y notas | Letra normal de la Epson (1,5 × 3 mm), platillos en negrita |
+| Número de pedido y `== PLATO N ==` | Alto doble (6 mm) |
+| TOTAL de la cuenta | Alto y ancho doble |
+
+Configuración en **⋯ → Impresora de tickets**:
+
+- **Impresora:** *Automática* detecta la Epson por su nombre (TM-, EPSON, Receipt).
+- **Modo:** *Automático* usa ESC/POS en impresoras de tickets e impresión normal de
+  Windows en las demás.
+- **Papel:** 80 mm (48 columnas) o 58 mm (32 columnas).
+- **Letra de la comanda:** *Normal* (recomendada) o *Grande*, para leer de lejos en cocina.
+- **Imprimir prueba:** revisa tildes, tamaños y corte.
+
+Requisito: instalar el driver de Epson (*EPSON Advanced Printer Driver* para TM-T20III).
 
 ## Meseros desde el celular
 

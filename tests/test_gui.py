@@ -324,23 +324,66 @@ def test_payment_quick_amounts():
 # ---------------------------------------------------------------------------
 #  Platos, comandas y cuenta
 # ---------------------------------------------------------------------------
-def test_kitchen_ticket_groups_by_plate_and_marks_additions(window, manager):
+def test_kitchen_button_prints_only_new_items_grouped_by_plate(window, manager, monkeypatch):
+    from utils import tickets
+
+    sent = []
+    monkeypatch.setattr(window.ticket_printer, "print_ticket",
+                        lambda ticket, job: sent.append(tickets.to_text(ticket)) or "EPSON TM-T20III Receipt")
     manager.create_table("Mesa 1")
     manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
     manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15, qty=2, plate=2, note="sin cebolla")
     manager.add_item("Mesa 1", "Bebidas", "Coca cola", "Botella", 10)
-    order = manager.get_order("Mesa 1")
-    html_text = window.kitchen_ticket_html("Mesa 1", order, manager.get_order_lines("Mesa 1"), False)
-    assert (html_text.index("PLATO 1") < html_text.index("Pastor") < html_text.index("PLATO 2")
-            < html_text.index("Carne") < html_text.index("SIN PLATO"))
-    assert "sin cebolla" in html_text
+    window.select_order("Mesa 1")
+    window.print_kitchen_ticket()
+    first = sent[-1]
+    assert (first.index("PLATO 1") < first.index("Pastor") < first.index("PLATO 2")
+            < first.index("Carne") < first.index("SIN PLATO"))
+    assert "sin cebolla" in first
+    assert "Comanda enviada a EPSON TM-T20III Receipt" in window.toast.last_message
 
-    manager.mark_sent_to_kitchen("Mesa 1")
     manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15, plate=2)
-    order = manager.get_order("Mesa 1")
-    pending = manager.get_order_lines("Mesa 1", kitchen_pending_only=True)
-    html_text = window.kitchen_ticket_html("Mesa 1", order, pending, False)
-    assert "PLATO 2 (agregar)" in html_text and "PLATO 1" not in html_text
+    window.print_kitchen_ticket()
+    assert "PLATO 2 (agregar)" in sent[-1] and "PLATO 1" not in sent[-1]
+
+
+def test_print_error_keeps_items_pending(window, manager, monkeypatch, messages):
+    from utils.printer import PrinterError
+
+    def fail(ticket, job):
+        raise PrinterError("Abrir la impresora fallo")
+
+    monkeypatch.setattr(window.ticket_printer, "print_ticket", fail)
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
+    window.select_order("Mesa 1")
+    window.print_kitchen_ticket()
+    assert manager.kitchen_pending_count("Mesa 1") == 2
+    assert messages[-1][0] == "warning" and "Impresora de tickets" in messages[-1][1]
+
+
+def test_printer_dialog_detects_epson_and_saves(qapp, data_dir, monkeypatch):
+    import json
+    import os
+
+    from utils import printer
+    from views.dialogs import PrinterDialog
+
+    sent = []
+    monkeypatch.setattr(printer, "send_raw", lambda name, data, job: sent.append((name, data)))
+    config = {"impresora_tickets": "", "modo_impresion": "auto", "ancho_papel_mm": 80}
+    dialog = PrinterDialog(config, data_dir, "PRÖVA", printers=["Microsoft Print to PDF", "EPSON TM-T20III Receipt"],
+                           default="Microsoft Print to PDF")
+    assert "EPSON TM-T20III Receipt" in dialog.result_label.text()
+    assert "ESC/POS" in dialog.result_label.text() and "48 columnas" in dialog.result_label.text()
+    dialog.print_test()
+    assert sent and sent[0][0] == "EPSON TM-T20III Receipt"
+    dialog.paper_combo.setCurrentIndex(dialog.paper_combo.findData(58))
+    dialog.printer_combo.setCurrentIndex(dialog.printer_combo.findData("EPSON TM-T20III Receipt"))
+    dialog.save()
+    assert config["ancho_papel_mm"] == 58 and config["impresora_tickets"] == "EPSON TM-T20III Receipt"
+    with open(os.path.join(data_dir, "config.json"), encoding="utf-8") as f:
+        assert json.load(f)["impresora_tickets"] == "EPSON TM-T20III Receipt"
 
 
 def test_plate_dialog_splits_line_between_plates(window, manager, qapp):
@@ -366,18 +409,20 @@ def test_plate_dialog_splits_line_between_plates(window, manager, qapp):
 
 
 def test_customer_bill_merges_plates(window, manager, monkeypatch):
+    from utils import tickets
+
     printed = []
-    monkeypatch.setattr(window, "print_html", lambda body: printed.append(body) or True)
+    monkeypatch.setattr(window, "send_ticket", lambda ticket, title: printed.append(tickets.to_text(ticket)) or True)
     manager.create_table("Mesa 1")
     manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=3, plate=1)
     manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2, plate=2)
     window.select_order("Mesa 1")
     window.print_customer_bill()
-    assert "5x Taco (Pastor)" in printed[0] and "Plato" not in printed[0]
+    assert "5 x Taco (Pastor)" in printed[0] and "Plato" not in printed[0]
 
 
 def test_printing_kitchen_ticket_marks_items_as_sent(window, manager, monkeypatch):
-    monkeypatch.setattr(window, "print_html", lambda body: True)
+    monkeypatch.setattr(window, "send_ticket", lambda ticket, title: True)
     manager.create_table("Mesa 1")
     manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
     window.select_order("Mesa 1")

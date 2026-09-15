@@ -17,8 +17,11 @@ from models.order import (
 from utils.config import app_dir, load_config, save_config_value
 from utils.icons import category_icon, normalize_text, product_icon
 from utils.styles import THEME_NAMES, ThemeManager
+from utils import tickets
+from utils.printer import PrinterError, TicketPrinter
 from views.dialogs import (
     AddOrderDialog, DaySummaryDialog, DeliveryDialog, EditTableDialog, PaymentDialog, PlateDialog,
+    PrinterDialog,
 )
 from views.widgets import (
     PRODUCT_CARD_MIN_WIDTH, FlowLayout, OrderCard, ProductCard, TicketLine, Toast, clear_layout,
@@ -66,6 +69,7 @@ class ProvaRestaurant(QMainWindow):
         self.waiter_pin = str(self.config.get("pin_meseros", ""))
         self.waiter_url = ""
         self.waiter_server = None
+        self.ticket_printer = TicketPrinter(self.config)
 
         self.active_plate = 1
         self._plate_table = None
@@ -182,6 +186,7 @@ class ProvaRestaurant(QMainWindow):
         more_menu.addAction("\U0001F4BE  Exportar respaldo del día", lambda _=False: self.save_to_excel())
         more_menu.addAction("\U0001F4C2  Abrir carpeta de ventas", lambda _=False: self.open_data_folder())
         more_menu.addSeparator()
+        more_menu.addAction("\U0001F5A8  Impresora de tickets…", lambda _=False: self.open_printer_settings())
         more_menu.addAction("\U0001F511  Cambiar PIN de meseros", lambda _=False: self.change_waiter_pin())
         self.more_btn.setMenu(more_menu)
         for widget in (self.waiters_btn, self.summary_btn, self.theme_btn, self.more_btn):
@@ -1067,34 +1072,23 @@ class ProvaRestaurant(QMainWindow):
             QMessageBox.warning(self, "Revisar Excel", f"La venta quedó registrada, pero:\n{result.message}")
 
     # ================================================================
-    #  Impresion
+    #  Impresion (tickets para la Epson TM-T20III)
     # ================================================================
-    def print_html(self, body: str) -> bool:
+    def send_ticket(self, ticket, title: str) -> bool:
+        """Manda el ticket directo a la impresora de tickets, sin dialogo de impresion."""
         try:
-            from PyQt6.QtGui import QFont, QTextDocument
-            from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
-
-            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-            dlg = QPrintDialog(printer, self)
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                return False
-            doc = QTextDocument()
-            doc.setDefaultFont(QFont("Arial", 10))
-            doc.setHtml(body)
-            doc.print(printer)
-            self.toast.show_message("\U0001F5A8 Enviado a la impresora", "success")
-            return True
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al imprimir: {e}")
+            name = self.ticket_printer.print_ticket(ticket, f"PROVA {title}")
+        except PrinterError as e:
+            QMessageBox.warning(
+                self, "No se pudo imprimir",
+                f"{e}\n\nRevisa que la impresora esté encendida y con papel, "
+                f"o elige otra en ⋯ → Impresora de tickets.")
             return False
-
-    def _ticket_header(self, table: str, order: dict, title: str) -> str:
-        esc = html.escape
-        now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-        return (f"<p align='center' style='margin:0'><b style='font-size:15px'>{esc(self.local_name)}</b><br/>"
-                f"{esc(title)}</p><hr/>"
-                f"<p style='margin:0'><b style='font-size:15px'>{esc(order['number'])} - {esc(table)}</b><br/>"
-                f"{esc(order['order_type'])}<br/>{now}</p><hr/>")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al imprimir", str(e))
+            return False
+        self.toast.show_message(f"\U0001F5A8 {title} enviada a {name}", "success")
+        return True
 
     def print_kitchen_ticket(self, reprint_all: bool = False):
         table = self._require_table("No hay nada para imprimir")
@@ -1115,34 +1109,11 @@ class ProvaRestaurant(QMainWindow):
             lines = self.order_manager.get_order_lines(table)
             reprint_all = True
 
-        if self.print_html(self.kitchen_ticket_html(table, order, lines, reprint_all)):
+        ticket = tickets.kitchen_ticket(self.local_name, order, table, lines, reprint_all,
+                                        self.ticket_printer.columns,
+                                        large_items=self.ticket_printer.large_kitchen_items)
+        if self.send_ticket(ticket, "Comanda"):
             self.order_manager.mark_sent_to_kitchen(table)
-
-    def kitchen_ticket_html(self, table: str, order: dict, lines: list, reprint_all: bool) -> str:
-        """Comanda agrupada por plato para que cocina sepa como servir cada uno."""
-        esc = html.escape
-        title = "COMANDA COCINA" + (" (REIMPRESION)" if reprint_all else "")
-        # Platos que cocina ya recibio: lo nuevo se agrega a ese plato
-        sent_plates = {i.get("plate", 0) for i in order["items"] if i.get("kitchen_sent")}
-        with_plates = any(line["plate"] for line in lines)
-        body = [self._ticket_header(table, order, title)]
-        for plate, plate_lines in group_lines_by_plate(lines):
-            if with_plates:
-                heading = plate_label(plate).upper() if plate else "SIN PLATO"
-                if plate and plate in sent_plates and not reprint_all:
-                    heading += " (agregar)"
-                body.append(f"<p style='margin:8px 0 2px 0'><b style='font-size:17px'>"
-                            f"== {esc(heading)} ==</b></p>")
-            body.append("<table width='100%' cellpadding='2'>")
-            for line in plate_lines:
-                body.append(f"<tr><td valign='top' width='36'><b style='font-size:15px'>{line['qty']}x</b></td>"
-                            f"<td><b style='font-size:15px'>{esc(line['dish'])}</b> ({esc(line['variant'])})")
-                if line["note"]:
-                    body.append(f"<br/><i>&gt;&gt; {esc(line['note'])}</i>")
-                body.append("</td></tr>")
-            body.append("</table>")
-        body.append("<hr/>")
-        return "".join(body)
 
     def print_customer_bill(self):
         table = self._require_table("No hay nada para imprimir")
@@ -1153,31 +1124,16 @@ class ProvaRestaurant(QMainWindow):
         if not lines:
             self.toast.show_message("El pedido está vacío.", "warning")
             return
-        esc = html.escape
-        total = sum(l["subtotal"] for l in lines)
-        # Al cliente no le importa el plato ni la nota: se suman las lineas iguales
-        bill_lines = {}
-        for line in lines:
-            key = (line["dish"], line["variant"], line["unit_price"])
-            entry = bill_lines.setdefault(key, [0, 0.0])
-            entry[0] += line["qty"]
-            entry[1] += line["subtotal"]
-        body = [self._ticket_header(table, order, "CUENTA"), "<table width='100%' cellpadding='2'>"]
-        for (dish, variant, _price), (qty, subtotal) in bill_lines.items():
-            body.append(f"<tr><td>{qty}x {esc(dish)} ({esc(variant)})</td>"
-                        f"<td align='right'>{subtotal:.2f}</td></tr>")
-        body.append(f"</table><hr/><p align='right' style='font-size:15px'><b>TOTAL: {money(total)}</b></p>")
-        delivery = order.get("delivery")
-        if delivery and order["order_type"] == ORDER_TYPE_TAKEAWAY and delivery.get("moto_cost"):
-            body.append(f"<p>Moto: {money(delivery['moto_cost'])} ({esc(delivery['moto_payment_method'])})</p>")
-        payment = order.get("payment")
-        if payment:
-            body.append(f"<p>Pagado: {esc(payment['method'])}")
-            if payment.get("change"):
-                body.append(f"<br/>Recibido: {money(payment['amount_paid'])} - Cambio: {money(payment['change'])}")
-            body.append("</p>")
-        body.append("<p align='center'>¡Gracias por tu visita!<br/>No la mires mucho, se te va a antojar</p>")
-        self.print_html("".join(body))
+        ticket = tickets.customer_bill(self.local_name, self.config.get("ciudad", ""), order, table, lines,
+                                       self.ticket_printer.columns)
+        self.send_ticket(ticket, "Cuenta")
+
+    def print_day_summary(self, summary: dict, date_label: str) -> bool:
+        ticket = tickets.day_summary_ticket(self.local_name, summary, date_label, self.ticket_printer.columns)
+        return self.send_ticket(ticket, "Cierre de caja")
+
+    def open_printer_settings(self):
+        PrinterDialog(self.config, self.order_manager.root, self.local_name, self).exec()
 
     # ================================================================
     #  Reportes y respaldos
