@@ -19,14 +19,39 @@ un acceso directo en el escritorio). También sirve desde la terminal:
 
 Si algo falla con `pythonw`, los errores quedan en `data/errores.log` y la app avisa en pantalla.
 
-Para compilar el ejecutable:
+## Llevar la caja a la PC del restaurante
 
-```bash
-pip install -r requirements-dev.txt
-pyinstaller main.spec
-```
+La PC del restaurante **no necesita Python**: se lleva un solo ejecutable.
 
-Copia `menu_precios.xlsx` y `prova.png` junto a `dist/main.exe`.
+1. Compilar (en la PC de desarrollo, con el `.venv` listo):
+
+   ```bash
+   .venv\Scripts\python.exe -m PyInstaller main.spec --noconfirm
+   ```
+
+   Genera `dist\PROVA.exe` (un solo archivo, sin consola y con el logo). Usar
+   `main.spec` en vez de `pyinstaller --onefile --windowed ...`: el `.spec` ya incluye
+   la pantalla de meseros (`templates/`) y el icono; sin eso el celular da error.
+2. Copiar a una carpeta de la PC del restaurante, por ejemplo `C:\PROVA\`:
+   - `PROVA.exe`
+   - `menu_precios.xlsx` (el dueño lo edita para cambiar precios)
+   - `prova.png` (logo del encabezado y del celular)
+
+   No copiar la carpeta `data/` de desarrollo: tiene ventas de prueba. La app crea una
+   nueva con su propio PIN de meseros. No usar `C:\Program Files`, porque ahí Windows
+   no deja escribir las ventas.
+3. Clic derecho en `PROVA.exe` → *Enviar a* → *Escritorio (crear acceso directo)*.
+4. La primera vez:
+   - Windows SmartScreen puede decir «Windows protegió su PC» (el `.exe` no está
+     firmado): *Más información* → *Ejecutar de todas formas*.
+   - El Firewall pregunta por la red: permitir en **redes privadas** para que entren
+     los celulares.
+   - Configurar la impresora de comandas como predeterminada.
+5. Recomendado: reservar una IP fija para esa PC en el router del local, así la
+   dirección que usan los meseros (`http://192.168.x.x:5000`) no cambia.
+
+Para actualizar, se reemplaza solo `PROVA.exe`; la carpeta `data/` (ventas, PIN,
+pedidos abiertos) se conserva.
 
 ## Diseño
 

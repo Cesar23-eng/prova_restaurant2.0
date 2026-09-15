@@ -16,6 +16,8 @@ data/*.log
 data/*.lock
 respaldo_*.xlsx
 dist/data/
+# Ejecutables compilados: se comparten por USB o Drive, no por git
+dist/*.exe
 
 # IDE
 .idea/workspace.xml

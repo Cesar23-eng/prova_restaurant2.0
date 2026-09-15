@@ -4,10 +4,10 @@ import sys
 import traceback
 
 from PyQt6.QtCore import QLockFile, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from utils.config import data_root, load_config
+from utils.config import app_dir, data_root, load_config, resource_dir
 
 
 def install_error_handler():
@@ -33,12 +33,29 @@ def install_error_handler():
     sys.excepthook = handle
 
 
+def set_app_icon(app: QApplication):
+    """Logo de PRÖVA en la ventana y en la barra de tareas (en vez del icono de Python)."""
+    for folder in (resource_dir(), app_dir()):
+        path = os.path.join(folder, "prova.ico")
+        if os.path.exists(path):
+            app.setWindowIcon(QIcon(path))
+            break
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PROVA.Mexico.Caja")
+        except (AttributeError, OSError):
+            pass
+
+
 def main() -> int:
     install_error_handler()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("PRÖVA México")
     app.setFont(QFont("Segoe UI", 10))
+    set_app_icon(app)
 
     # Dos copias abiertas pisarian los pedidos guardadas una de la otra
     lock = QLockFile(os.path.join(data_root(), "prova.lock"))
