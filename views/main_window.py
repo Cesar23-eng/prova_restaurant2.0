@@ -450,7 +450,7 @@ class ProvaRestaurant(QMainWindow):
             from server import WaiterServer, create_app, get_local_ip
 
             app = create_app(self.order_manager, self.menu_data, lambda: self.waiter_pin,
-                             int(self.config.get("numero_mesas", 8)))
+                             int(self.config.get("numero_mesas", 13)))
             self.waiter_server = WaiterServer(app)
             port = self.waiter_server.start(int(self.config.get("puerto_meseros", 5000)))
             self.waiter_url = f"http://{get_local_ip()}:{port}"
@@ -634,7 +634,7 @@ class ProvaRestaurant(QMainWindow):
             self.toast.show_message(f"{dish} ({variant}) ya no está en el menú.", "error")
             return False
         qty = self.qty_spin.value()
-        plate = self.active_plate if self.order_manager.plate_applies(category) else 0
+        plate = self.active_plate if self.order_manager.plate_applies(dish) else 0
         try:
             self.order_manager.add_item(table, category, dish, variant, price, qty=qty, plate=plate)
         except (KeyError, ValueError, PermissionError) as e:
@@ -742,10 +742,12 @@ class ProvaRestaurant(QMainWindow):
         for plate, plate_lines in group_lines_by_plate(indexed):
             if with_plates:
                 subtotal = sum(line["subtotal"] for line in plate_lines)
-                title = f"\U0001F37D  {plate_label(plate).upper()}" if plate else "SIN PLATO  ·  BEBIDAS"
+                title = f"\U0001F37D  {plate_label(plate).upper()}" if plate else "OTROS  ·  SIN PLATO"
                 self.lines_layout.addWidget(make_label(f"{title}   ·   {money(subtotal)}", "plateHeader"))
             for line in plate_lines:
-                widget = TicketLine(line, line["index"], not paid, self.change_line_qty, self.show_line_menu)
+                widget = TicketLine(line, line["index"], not paid, self.change_line_qty, self.show_line_menu,
+                                    plate_enabled=self.order_manager.plate_applies(line["dish"]),
+                                    on_plate=self.show_plate_menu)
                 self.lines_layout.addWidget(widget)
                 self.ticket_lines.append(widget)
         self.lines_layout.addStretch()
@@ -787,7 +789,7 @@ class ProvaRestaurant(QMainWindow):
         options = [(plate, str(plate), f"Agregar al {plate_label(plate)}") for plate in plates]
         if next_plate not in plates:
             options.append((next_plate, "＋", f"Empezar el {plate_label(next_plate)}"))
-        options.append((0, "Sin plato", "Para compartir; bebidas y jugos siempre van aquí"))
+        options.append((0, "Sin plato", "Los tacos que toques van sin plato asignado"))
         for plate, text, tooltip in options:
             button = make_button(text, "plateChip", tooltip=tooltip)
             button.setCheckable(True)
@@ -799,10 +801,10 @@ class ProvaRestaurant(QMainWindow):
             self.plate_layout.addWidget(button)
             self.plate_buttons[plate] = button
         if self.active_plate:
-            self.plate_hint.setText(f"Lo que toques en el menú va al {plate_label(self.active_plate)}. "
-                                    f"Bebidas y jugos van aparte.")
+            self.plate_hint.setText(f"Los tacos que toques van al {plate_label(self.active_plate)}. "
+                                    f"Lo demás va sin plato.")
         else:
-            self.plate_hint.setText("Lo que toques en el menú va sin plato (para compartir).")
+            self.plate_hint.setText("Los tacos que toques van sin plato.")
 
     def set_active_plate(self, plate: int):
         self.active_plate = plate
@@ -845,20 +847,42 @@ class ProvaRestaurant(QMainWindow):
             return
         menu = QMenu(self)
         menu.addAction("\U0001F4DD  Nota para cocina…", lambda _=False: self.edit_line_note(index))
-        move = menu.addMenu("\U0001F37D  Mover a plato")
-        if self.order_manager.plate_applies(line["category"]):
-            used = self.order_manager.used_plates(self.current_table)
-            top = min(max(used + [line["plate"], 0]) + 1, MAX_PLATES)
-            for plate in [0] + list(range(1, top + 1)):
-                suffix = "" if plate == 0 or plate in used else "  (nuevo)"
-                action = move.addAction(f"{plate_label(plate)}{suffix}",
-                                        lambda _=False, p=plate: self.move_line(index, p))
-                action.setEnabled(plate != line["plate"])
-        else:
-            move.setEnabled(False)
+        if self.order_manager.plate_applies(line["dish"]):
+            self.fill_plate_menu(menu, index, line)
         menu.addSeparator()
         menu.addAction(f"\U0001F5D1  Quitar todo ({line['qty']})", lambda _=False: self.remove_whole_line(index))
         menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
+
+    def show_plate_menu(self, index: int, anchor):
+        line = self._line(index)
+        if line is None or not self.order_manager.plate_applies(line["dish"]):
+            return
+        menu = QMenu(self)
+        self.fill_plate_menu(menu, index, line)
+        menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
+
+    def fill_plate_menu(self, menu: QMenu, index: int, line: dict):
+        """
+        Opciones de plato de una linea de tacos. Con varias unidades se puede
+        separar una sola (p. ej. de 3 tacos con queso, 1 a otro plato) o mover todas.
+        """
+        used = self.order_manager.used_plates(self.current_table)
+        top = min(max(used + [line["plate"], 0]) + 1, MAX_PLATES)
+        targets = [plate for plate in [*range(1, top + 1), 0] if plate != line["plate"]]
+
+        def label(plate):
+            suffix = "  (nuevo)" if plate and plate not in used else ""
+            return f"{plate_label(plate)}{suffix}"
+
+        if line["qty"] > 1:
+            menu.addSection(f"Separar 1 de los {line['qty']} a…")
+            for plate in targets:
+                menu.addAction(f"✂  {label(plate)}", lambda _=False, p=plate: self.move_line(index, p, 1))
+            menu.addSection(f"Mover los {line['qty']} a…")
+        else:
+            menu.addSection("Mover a…")
+        for plate in targets:
+            menu.addAction(f"\U0001F37D  {label(plate)}", lambda _=False, p=plate: self.move_line(index, p))
 
     def edit_line_note(self, index: int):
         line = self._line(index)
@@ -878,17 +902,18 @@ class ProvaRestaurant(QMainWindow):
             self.toast.show_message(f"Nota guardada. {already_sent} ya salieron en comanda: avisa a cocina.",
                                     "warning", 5000)
 
-    def move_line(self, index: int, plate: int):
+    def move_line(self, index: int, plate: int, count: int = None):
         try:
-            moved, already_sent = self.order_manager.move_line_to_plate(self.current_table, index, plate)
+            moved, already_sent = self.order_manager.move_line_to_plate(self.current_table, index, plate, count)
         except (KeyError, ValueError, PermissionError) as e:
             self.toast.show_message(str(e), "error")
             return
+        what = f"{moved} separado al" if count else "Movido al"
         if already_sent:
-            self.toast.show_message(f"Movido al {plate_label(plate)}. {already_sent} ya salieron en "
+            self.toast.show_message(f"{what} {plate_label(plate)}. {already_sent} ya salieron en "
                                     f"comanda: avisa a cocina.", "warning", 5000)
         elif moved:
-            self.toast.show_message(f"Movido al {plate_label(plate)}", "success", 1500)
+            self.toast.show_message(f"{what} {plate_label(plate)}", "success", 1500)
 
     def remove_whole_line(self, index: int):
         line = self._line(index)
@@ -918,7 +943,7 @@ class ProvaRestaurant(QMainWindow):
 
     def add_pedido(self) -> bool:
         dialog = AddOrderDialog(self, occupied=self.order_manager.get_all_tables(),
-                                table_count=int(self.config.get("numero_mesas", 8)))
+                                table_count=int(self.config.get("numero_mesas", 13)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
         ok, result = self.order_manager.create_table(dialog.get_order_name(), dialog.get_order_type())
@@ -1103,7 +1128,7 @@ class ProvaRestaurant(QMainWindow):
         body = [self._ticket_header(table, order, title)]
         for plate, plate_lines in group_lines_by_plate(lines):
             if with_plates:
-                heading = plate_label(plate).upper() if plate else "SIN PLATO / BEBIDAS"
+                heading = plate_label(plate).upper() if plate else "SIN PLATO"
                 if plate and plate in sent_plates and not reprint_all:
                     heading += " (agregar)"
                 body.append(f"<p style='margin:8px 0 2px 0'><b style='font-size:17px'>"

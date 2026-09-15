@@ -18,8 +18,9 @@ PAYMENT_METHODS = ("Efectivo", "QR", "Mixto")
 STATE_FILENAME = "estado_pedidos.json"
 MAX_NOTE_LENGTH = 120
 MAX_QTY_PER_ADD = 100
-# Plato 0 = sin plato (bebidas, cosas para compartir)
+# Plato 0 = sin plato. Solo los productos que se piden por unidad se reparten en platos.
 MAX_PLATES = 30
+DEFAULT_PLATE_PRODUCTS = ("Taco", "Taco con queso")
 
 
 class OrderChangedError(Exception):
@@ -66,18 +67,18 @@ class OrderManager:
     """
 
     def __init__(self, root: Optional[str] = None, cutoff_hour: Optional[int] = None,
-                 restore: bool = True, no_plate_categories: Optional[Iterable[str]] = None):
+                 restore: bool = True, plate_products: Optional[Iterable[str]] = None):
         self.root = root or data_root()
         os.makedirs(self.root, exist_ok=True)
-        if cutoff_hour is None or no_plate_categories is None:
+        if cutoff_hour is None or plate_products is None:
             config = load_config(self.root)
             if cutoff_hour is None:
                 cutoff_hour = int(config.get("hora_corte_jornada", 4))
-            if no_plate_categories is None:
-                no_plate_categories = config.get("categorias_sin_plato", [])
+            if plate_products is None:
+                plate_products = config.get("productos_con_plato", DEFAULT_PLATE_PRODUCTS)
         self.cutoff_hour = cutoff_hour
-        self.no_plate_categories = [str(c) for c in no_plate_categories]
-        self._no_plate_norm = {self._norm(c) for c in self.no_plate_categories}
+        self.plate_products = [str(p) for p in plate_products]
+        self._plate_products_norm = {self._norm(p) for p in self.plate_products}
 
         self._lock = threading.RLock()
         self._excel_lock = threading.Lock()
@@ -177,6 +178,8 @@ class OrderManager:
                 item.setdefault("note", "")
                 item.setdefault("kitchen_sent", False)
                 item.setdefault("plate", 0)
+                if not self.plate_applies(item.get("dish", "")):
+                    item["plate"] = 0
             self._orders[name] = order
             if not order["paid"]:
                 self.restored_count += 1
@@ -330,9 +333,12 @@ class OrderManager:
             "price": price, "note": note, "qty": qty, "plate": plate,
         }], source=source)
 
-    def plate_applies(self, category: str) -> bool:
-        """Las categorias configuradas (bebidas, jugos) no se emplatan."""
-        return self._norm(category) not in self._no_plate_norm
+    def plate_applies(self, dish: str) -> bool:
+        """
+        Solo los productos de `productos_con_plato` (los tacos, que se piden por
+        unidad) se reparten en platos; todo lo demas va sin plato.
+        """
+        return self._norm(dish) in self._plate_products_norm
 
     @staticmethod
     def _parse_plate(value) -> int:
@@ -362,7 +368,7 @@ class OrderManager:
                 raise ValueError(f"Precio o cantidad invalida para {dish}")
             note = self._clean(item.get("note", ""))[:MAX_NOTE_LENGTH]
             category = self._clean(item.get("category", ""))
-            plate = self._parse_plate(item.get("plate")) if self.plate_applies(category) else 0
+            plate = self._parse_plate(item.get("plate")) if self.plate_applies(dish) else 0
             unit = {
                 "category": category,
                 "dish": dish,
@@ -436,8 +442,8 @@ class OrderManager:
             if not 0 <= line_index < len(lines):
                 return 0, 0
             line = lines[line_index]
-            if plate and not self.plate_applies(line["category"]):
-                raise ValueError(f"{line['category']} no se asigna a un plato")
+            if plate and not self.plate_applies(line["dish"]):
+                raise ValueError(f"{line['dish']} no se reparte en platos (solo los tacos)")
             if line["plate"] == plate:
                 return 0, 0
             count = line["qty"] if count is None else max(0, min(int(count), line["qty"]))

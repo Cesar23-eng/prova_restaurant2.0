@@ -49,7 +49,7 @@ def _segmented(options, checked, object_name="segment"):
 class AddOrderDialog(QDialog):
     """Crear pedido: un toque en el numero de mesa o el nombre del cliente para llevar."""
 
-    def __init__(self, parent=None, suggested_name: str = "", occupied=None, table_count: int = 8):
+    def __init__(self, parent=None, suggested_name: str = "", occupied=None, table_count: int = 13):
         super().__init__(parent)
         self.suggested_name = suggested_name
         self.occupied = {name.lower() for name in (occupied or [])}
@@ -70,6 +70,7 @@ class AddOrderDialog(QDialog):
         if self.table_count:
             grid = QGridLayout()
             grid.setSpacing(8)
+            columns = 5 if self.table_count > 8 else 4
             self.table_buttons = {}
             for i in range(self.table_count):
                 name = f"Mesa {i + 1}"
@@ -78,7 +79,7 @@ class AddOrderDialog(QDialog):
                 button.setEnabled(not busy)
                 button.setToolTip("Mesa ocupada" if busy else f"Crear pedido para {name}")
                 button.clicked.connect(lambda _c=False, n=name: self._pick_table(n))
-                grid.addWidget(button, i // 4, i % 4)
+                grid.addWidget(button, i // columns, i % columns)
                 self.table_buttons[name] = button
             layout.addLayout(grid)
 
@@ -166,7 +167,7 @@ class PlateDialog(QDialog):
         layout = _dialog_layout(
             self, "REPARTIR EN PLATOS",
             "Selecciona un platillo, elige cuántas unidades y a qué plato van. "
-            "Ejemplo: de 5 tacos al pastor, 3 al Plato 1 y 2 al Plato 2.")
+            "Ejemplo: de 3 tacos con queso, 2 al Plato 1 y 1 al Plato 2.")
 
         self.list_widget = QListWidget()
         self.list_widget.currentItemChanged.connect(lambda *_: self._on_selection())
@@ -197,7 +198,7 @@ class PlateDialog(QDialog):
         to_select = None
         indexed = [dict(line, index=i) for i, line in enumerate(self.lines)]
         for plate, plate_lines in group_lines_by_plate(indexed):
-            title = f"\U0001F37D  {plate_label(plate)}" if plate else "Sin plato (bebidas y para compartir)"
+            title = f"\U0001F37D  {plate_label(plate)}" if plate else "Sin plato"
             header = QListWidgetItem(title.upper())
             font = header.font()
             font.setBold(True)
@@ -241,7 +242,7 @@ class PlateDialog(QDialog):
 
     def _on_selection(self):
         line = self.selected_line()
-        enabled = line is not None and self.order_manager.plate_applies(line["category"])
+        enabled = line is not None and self.order_manager.plate_applies(line["dish"])
         self.count_spin.setEnabled(enabled)
         self.target_combo.setEnabled(enabled)
         self.move_btn.setEnabled(enabled)
@@ -250,7 +251,7 @@ class PlateDialog(QDialog):
         self.count_spin.setRange(1, line["qty"])
         self.count_spin.setValue(line["qty"])
         if not enabled:
-            self.status_label.setText(f"{line['category']} no se asigna a un plato.")
+            self.status_label.setText(f"{line['dish']} va sin plato: solo los tacos se reparten.")
 
     def move_selected(self):
         index = self.selected_index()

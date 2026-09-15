@@ -295,3 +295,38 @@ def test_remove_paid_orders(manager):
     assert manager.get_all_tables() == ["Mesa 2"]
     assert manager.current_table is None
     assert manager.day_summary()["orders"] == 1
+
+
+def test_only_tacos_get_plates(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco con queso", "Carne", 17, qty=2, plate=2)
+    manager.add_item("Mesa 1", "Platillos", "Quesadilla", "Pollo", 35, plate=2)
+    manager.add_item("Mesa 1", "Platillos", "Burrito", "Birria", 35, plate=1)
+    plates = {l["dish"]: l["plate"] for l in manager.get_order_lines("Mesa 1")}
+    assert plates == {"Taco con queso": 2, "Quesadilla": 0, "Burrito": 0}
+    assert manager.plate_applies("taco  con QUESO")
+    assert not manager.plate_applies("Quesabirria")
+    with pytest.raises(ValueError):
+        manager.move_line_to_plate("Mesa 1", 1, 3)
+
+
+def test_split_three_tacos_con_queso_two_and_one(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco con queso", "Carne", 17, qty=3, plate=1)
+    assert manager.move_line_to_plate("Mesa 1", 0, 2, count=1) == (1, 0)
+    lines = [(l["plate"], l["qty"]) for l in manager.get_order_lines("Mesa 1")]
+    assert sorted(lines) == [(1, 2), (2, 1)]
+
+
+def test_restored_non_taco_items_lose_their_plate(manager, data_dir):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, plate=2)
+    state_path = os.path.join(data_dir, "estado_pedidos.json")
+    with open(state_path, encoding="utf-8") as f:
+        state = json.load(f)
+    state["orders"][0]["items"].append({"category": "Platillos", "dish": "Quesadilla", "variant": "Pollo",
+                                        "price": 35, "note": "", "plate": 3})
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    restored = OrderManager(root=data_dir, cutoff_hour=4)
+    assert [i["plate"] for i in restored.get_items("Mesa 1")] == [2, 0]

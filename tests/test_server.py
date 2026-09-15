@@ -109,16 +109,17 @@ def test_server_falls_back_to_next_free_port(manager, menu_file):
 def test_waiter_assigns_plates(client, manager):
     manager.create_table("Mesa 1")
     ajustes = api(client, "get", "/api/ajustes").get_json()
-    assert ajustes["categorias_sin_plato"] == ["Bebidas", "Jugos"]
+    assert ajustes["productos_con_plato"] == ["Taco", "Taco con queso"]
     res = api(client, "post", "/api/pedido/Mesa 1/items", json={"items": [
         taco(cantidad=3, plato=1),
         {"categoria": "Platillos", "platillo": "Taco", "variante": "Pastor", "cantidad": 2, "plato": 2},
         {"categoria": "Bebidas", "platillo": "Coca cola", "variante": "Botella", "plato": 2},
+        {"categoria": "Platillos", "platillo": "Quesadilla", "variante": "Pollo", "plato": 1},
     ]})
-    assert res.get_json()["agregados"] == 6
+    assert res.get_json()["agregados"] == 7
     items = api(client, "get", "/api/pedido/Mesa 1").get_json()["items"]
     assert [(i["variante"], i["cantidad"], i["plato"]) for i in items] == [
-        ("Carne", 3, 1), ("Pastor", 2, 2), ("Botella", 1, 0),
+        ("Carne", 3, 1), ("Pastor", 2, 2), ("Botella", 1, 0), ("Pollo", 1, 0),
     ]
 
 
@@ -137,4 +138,4 @@ def test_logo_is_public_and_tables_include_waiting_minutes(client, manager):
     ajustes = api(client, "get", "/api/ajustes").get_json()
     assert ajustes["iconos"]["categorias"]["Platillos"] == "\U0001F32E"
     assert ajustes["iconos"]["productos"]["Taco"] == "\U0001F32E"
-    assert ajustes["numero_mesas"] == 8
+    assert ajustes["numero_mesas"] == 13

@@ -25,9 +25,9 @@ DEFAULT_CONFIG = {
     # "noche" (negro de la marca) o "dia" (concreto claro)
     "tema_visual": "noche",
     # Botones rapidos "Mesa 1..N" al crear un pedido
-    "numero_mesas": 8,
-    # Categorias del menu que nunca van en un plato (se sirven aparte)
-    "categorias_sin_plato": ["Bebidas", "Jugos"],
+    "numero_mesas": 13,
+    # Productos que se piden por unidad y cocina arma por plato
+    "productos_con_plato": ["Taco", "Taco con queso"],
 }
 
 _config_lock = threading.Lock()

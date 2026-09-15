@@ -13,6 +13,7 @@ build/
 data/*/
 data/*.json
 data/*.log
+data/*.lock
 respaldo_*.xlsx
 dist/data/
 

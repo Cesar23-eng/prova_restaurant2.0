@@ -33,7 +33,7 @@ def _minutes_since(stamp) -> int:
     return max(0, int((datetime.datetime.now() - started).total_seconds() // 60))
 
 
-def create_app(order_manager, menu_data, pin, table_count: int = 8) -> Flask:
+def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
     """
     `pin` puede ser un texto o una funcion que devuelve el PIN vigente.
     `table_count` es la cantidad de botones rapidos "Mesa 1..N" en el celular.
@@ -97,7 +97,7 @@ def create_app(order_manager, menu_data, pin, table_count: int = 8) -> Flask:
     @app.route("/api/ajustes")
     def api_ajustes():
         return jsonify({
-            "categorias_sin_plato": order_manager.no_plate_categories,
+            "productos_con_plato": order_manager.plate_products,
             "max_platos": MAX_PLATES,
             "iconos": menu_icons(menu_data.get_menu_prices()),
             "numero_mesas": int(table_count),

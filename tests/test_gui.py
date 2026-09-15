@@ -30,7 +30,7 @@ def window(qapp, manager, menu_file, data_dir, messages):
     from views.main_window import ProvaRestaurant
 
     config = {"nombre_local": "PRÖVA Test", "pin_meseros": "1234", "tema_visual": "noche",
-              "numero_mesas": 8}
+              "numero_mesas": 13}
     win = ProvaRestaurant(manager, MenuData(menu_file), config)
     yield win
     win.menu_timer.stop()
@@ -78,7 +78,9 @@ def test_menu_shows_category_chips_and_product_cards(window):
     assert list(window.category_buttons) == ["Platillos", "Bebidas", "Extras"]
     assert window.category_buttons["Platillos"].isChecked()
     assert set(window.variant_buttons) == {
-        ("Platillos", "Taco", "Carne"), ("Platillos", "Taco", "Pastor"), ("Platillos", "Quesadilla", "Pollo"),
+        ("Platillos", "Taco", "Carne"), ("Platillos", "Taco", "Pastor"),
+        ("Platillos", "Taco con queso", "Carne"), ("Platillos", "Taco con queso", "Lengua"),
+        ("Platillos", "Quesadilla", "Pollo"),
     }
     window.set_category("Bebidas")
     assert set(window.variant_buttons) == {("Bebidas", "Coca cola", "Botella")}
@@ -121,15 +123,19 @@ def test_products_go_to_active_plate_with_quantity(window, manager):
     window.plate_buttons[2].click()
     assert window.active_plate == 2
     window.add_product("Platillos", "Taco", "Carne")
-    window.add_product("Bebidas", "Coca cola", "Botella")  # las bebidas van sin plato
+    # Solo los tacos llevan plato: la quesadilla y la bebida van a "otros"
+    window.add_product("Platillos", "Quesadilla", "Pollo")
+    window.add_product("Bebidas", "Coca cola", "Botella")
     assert ticket_rows(window) == [
         "\U0001F37D  PLATO 1", "3x Taco Pastor",
         "\U0001F37D  PLATO 2", "1x Taco Carne",
-        "SIN PLATO", "1x Coca cola Botella",
+        "OTROS", "1x Quesadilla Pollo", "1x Coca cola Botella",
     ]
-    assert window.total_label.text() == "Bs 70.00"
-    assert "Bs 70.00" in window.pay_btn.text()
-    assert "(3)" not in window.kitchen_btn.text() and "(5)" in window.kitchen_btn.text()
+    assert window.total_label.text() == "Bs 105.00"
+    assert "Bs 105.00" in window.pay_btn.text()
+    assert "(6)" in window.kitchen_btn.text()
+    plate_buttons = {w.line["dish"]: w.plate_btn is not None for w in window.ticket_lines}
+    assert plate_buttons == {"Taco": True, "Quesadilla": False, "Coca cola": False}
 
 
 def test_plate_bar_defaults_to_last_used_plate_when_switching_tables(window, manager):
@@ -237,7 +243,8 @@ def test_clear_paid_orders(window, manager):
 def test_add_order_dialog_quick_tables(qapp, messages):
     from views.dialogs import AddOrderDialog
 
-    dialog = AddOrderDialog(occupied=["Mesa 1"], table_count=8)
+    dialog = AddOrderDialog(occupied=["Mesa 1"], table_count=13)
+    assert list(dialog.table_buttons)[-1] == "Mesa 13"
     assert not dialog.table_buttons["Mesa 1"].isEnabled()
     assert not dialog.ok_button.isEnabled()
     dialog.type_buttons["Para llevar"].setChecked(True)
@@ -325,11 +332,11 @@ def test_kitchen_ticket_groups_by_plate_and_marks_additions(window, manager):
     order = manager.get_order("Mesa 1")
     html_text = window.kitchen_ticket_html("Mesa 1", order, manager.get_order_lines("Mesa 1"), False)
     assert (html_text.index("PLATO 1") < html_text.index("Pastor") < html_text.index("PLATO 2")
-            < html_text.index("Carne") < html_text.index("SIN PLATO / BEBIDAS"))
+            < html_text.index("Carne") < html_text.index("SIN PLATO"))
     assert "sin cebolla" in html_text
 
     manager.mark_sent_to_kitchen("Mesa 1")
-    manager.add_item("Mesa 1", "Platillos", "Quesadilla", "Pollo", 35, plate=2)
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15, plate=2)
     order = manager.get_order("Mesa 1")
     pending = manager.get_order_lines("Mesa 1", kitchen_pending_only=True)
     html_text = window.kitchen_ticket_html("Mesa 1", order, pending, False)
@@ -378,3 +385,24 @@ def test_printing_kitchen_ticket_marks_items_as_sent(window, manager, monkeypatc
     window.kitchen_btn.click()
     assert manager.kitchen_pending_count("Mesa 1") == 0
     assert window.kitchen_btn.property("attention") is False
+
+
+def test_split_one_taco_con_queso_to_another_plate(window, manager):
+    from PyQt6.QtWidgets import QMenu
+
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco con queso", "Carne", 17, qty=3, plate=1)
+    window.select_order("Mesa 1")
+    line = window._line(0)
+    menu = QMenu(window)
+    window.fill_plate_menu(menu, 0, line)
+    texts = [action.text() for action in menu.actions()]
+    assert "Separar 1 de los 3 a…" in texts and "Mover los 3 a…" in texts
+    split_to_plate_2 = next(a for a in menu.actions()
+                            if a.text().startswith("\u2702") and "Plato 2" in a.text())
+    split_to_plate_2.trigger()
+    assert ticket_rows(window) == [
+        "\U0001F37D  PLATO 1", "2x Taco con queso Carne",
+        "\U0001F37D  PLATO 2", "1x Taco con queso Carne",
+    ]
+    assert "separado" in window.toast.last_message

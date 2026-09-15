@@ -197,6 +197,10 @@ class OrderCard(ClickableFrame):
         self.setToolTip(f"{order['number']} - {name}\n{order['order_type']}")
 
 
+def plate_label_short(plate: int) -> str:
+    return f"Plato {plate}" if plate else "Sin plato"
+
+
 def format_minutes(minutes: int) -> str:
     if minutes < 1:
         return "recién"
@@ -244,7 +248,8 @@ class ProductCard(QFrame):
 class TicketLine(QFrame):
     """Linea del ticket: cantidad con -/+, nombre, nota, precio y menu de opciones."""
 
-    def __init__(self, line: dict, index: int, editable: bool, on_qty, on_menu, parent=None):
+    def __init__(self, line: dict, index: int, editable: bool, on_qty, on_menu,
+                 plate_enabled: bool = False, on_plate=None, parent=None):
         super().__init__(parent)
         self.line = line
         self.index = index
@@ -281,6 +286,18 @@ class TicketLine(QFrame):
         text.addWidget(make_label(line["variant"], "lineSub", wrap=True))
         if line["note"]:
             text.addWidget(make_label(f"\U0001F4DD {line['note']}", "lineNote", wrap=True))
+        # Solo los tacos: boton visible para separar unidades o cambiarlas de plato
+        self.plate_btn = None
+        if plate_enabled and editable and on_plate is not None:
+            label = f"\U0001F37D {plate_label_short(line['plate'])}  ▾"
+            self.plate_btn = make_button(label, "plateChip",
+                                         tooltip="Separar unidades o cambiar de plato")
+            self.plate_btn.clicked.connect(lambda _checked=False: on_plate(index, self.plate_btn))
+            plate_row = QHBoxLayout()
+            plate_row.setContentsMargins(0, 4, 0, 0)
+            plate_row.addWidget(self.plate_btn)
+            plate_row.addStretch()
+            text.addLayout(plate_row)
         layout.addLayout(text, 1)
 
         price = make_label(money(line["subtotal"]), "linePrice")

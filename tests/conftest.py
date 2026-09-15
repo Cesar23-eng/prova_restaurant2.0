@@ -47,6 +47,8 @@ def menu_file(tmp_path):
     ws.append(["categoria", "producto", "variante", "precio"])
     ws.append(["Platillos", "Taco", "Carne", 15])
     ws.append(["Platillos", "Taco", "Pastor", 15])
+    ws.append(["Platillos", "Taco con queso", "Carne", 17])
+    ws.append(["Platillos", "Taco con queso", "Lengua", 21])
     ws.append(["Platillos", "Quesadilla", "Pollo", 35])
     ws.append(["Bebidas", "Coca cola", "Botella", 10])
     ws.append(["Extras", "Guacamole", None, 22])

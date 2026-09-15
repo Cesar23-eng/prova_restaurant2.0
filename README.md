@@ -44,7 +44,7 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 
 | Acción | Cómo |
 | --- | --- |
-| Nuevo pedido | **＋ Nuevo pedido** o `Ctrl+N`; botones rápidos *Mesa 1…8* (ajustable con `numero_mesas`) |
+| Nuevo pedido | **＋ Nuevo pedido** o `Ctrl+N`; botones rápidos *Mesa 1…13* (ajustable con `numero_mesas`) |
 | Agregar | Tocar la variante en el menú. Si no hay pedido abierto, pide crearlo. «Cantidad» multiplica el toque |
 | Buscar | `Ctrl+K`, escribir y `Enter` agrega si queda un solo resultado; `Esc` limpia |
 | Cobrar | **Cobrar** o `F9`. `F1` efectivo, `F2` QR, `F3` mixto; montos rápidos y cambio en grande |
@@ -57,19 +57,25 @@ se pide confirmación para acciones que no se pueden deshacer.
 
 ### Platos (emplatado para cocina)
 
-Los tacos se piden por unidad. Si en una mesa dos personas piden tacos, cada
-platillo se asigna a un plato para que cocina sepa qué va junto:
+Los tacos se piden por unidad. Si en una mesa dos personas piden tacos, cada taco
+se asigna a un plato para que cocina sepa qué va junto. **Solo *Taco* y *Taco con
+queso* llevan plato**; todo lo demás (quesadillas, burritos, bebidas…) va en «Otros».
+La lista se cambia con `productos_con_plato` en `config.json`.
 
-- **Caja:** la barra **PLATO 1 · 2 · ＋ · Sin plato** del ticket indica a qué plato va
-  lo que se toca en el menú. Cada línea se puede mover de plato con ⋯, y
-  ⋯ → *Repartir en platos* permite dividir (ej. de 5 tacos al pastor, 2 al Plato 2).
-- **Celular:** la misma barra está en el menú; en el carrito cada línea tiene su
-  selector de plato.
-- **Comanda de cocina:** sale agrupada (`== PLATO 1 ==`, `== PLATO 2 ==`). Si se agregan
-  platillos a un plato que cocina ya recibió, el encabezado dice *(agregar)*.
-- Las categorías de `categorias_sin_plato` en `config.json` (por defecto *Bebidas* y
-  *Jugos*) nunca llevan plato. La cuenta del cliente y el Excel suman las líneas sin
-  separarlas por plato.
+- **Caja:** la barra **PLATO 1 · 2 · ＋ · Sin plato** del ticket indica a qué plato van
+  los tacos que se tocan en el menú. Cada línea de tacos tiene su botón
+  **🍽 Plato N ▾** con dos opciones:
+  - *Separar 1 de los N a…*: por ejemplo, de 3 tacos con queso, 1 va al Plato 2 y
+    quedan 2 en el Plato 1.
+  - *Mover los N a…*: cambia toda la línea de plato.
+
+  ⋯ → *Repartir en platos* permite separar varias unidades a la vez.
+- **Celular:** la misma barra está en el menú. En el carrito cada línea de tacos tiene
+  su selector de plato y, si hay más de una unidad, el botón **✂ Separar 1**, que manda
+  una al siguiente plato.
+- **Comanda de cocina:** sale agrupada (`== PLATO 1 ==`, `== PLATO 2 ==`, `== SIN PLATO ==`).
+  Si se agregan tacos a un plato que cocina ya recibió, el encabezado dice *(agregar)*.
+- La cuenta del cliente y el Excel suman las líneas sin separarlas por plato.
 
 ## Meseros desde el celular
 
@@ -94,7 +100,7 @@ Todo se guarda en la carpeta `data/` junto al programa:
 | `AAAA-MM-DD/ventas_AAAA-MM-DD.jsonl` | Registro de cada cobro (fuente de verdad) |
 | `AAAA-MM-DD/pedidos_AAAA-MM-DD.xlsx` | Excel del dia: hojas *En el local*, *Para llevar* y *Resumen* |
 | `AAAA-MM-DD/audit_log_AAAA-MM-DD.txt` | Auditoria: quien agrego, quito, cobro o elimino |
-| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, categorías sin plato |
+| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, productos que llevan plato |
 | `errores.log` | Errores inesperados (la app no se cierra, avisa y registra) |
 
 - Si el Excel del dia esta abierto al cobrar, la venta igual queda registrada y la
