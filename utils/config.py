@@ -35,6 +35,12 @@ DEFAULT_CONFIG = {
     "ancho_papel_mm": 80,
     # "normal" (recomendada) o "grande" (platillos en alto doble)
     "letra_comanda": "normal",
+    # El pago a la moto sale de la caja: se descuenta del efectivo/QR esperado
+    "motos_salen_de_caja": True,
+    # Que pueden imprimir los meseros desde el celular: "comanda_y_cuenta", "solo_comanda" o "no"
+    "meseros_imprimen": "comanda_y_cuenta",
+    # Categorias del menu que aparecen en Inventario (agotado / disponible)
+    "categorias_inventario": ["Bebidas"],
 }
 
 _config_lock = threading.Lock()

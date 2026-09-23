@@ -168,13 +168,52 @@ def customer_bill(local_name: str, city: str, order: dict, table: str, lines: Li
     return ticket
 
 
+def _cash_block(ticket: Ticket, summary: dict, cash: dict):
+    """Arqueo: de donde sale el efectivo y el QR que deberia haber al cerrar."""
+    ticket.add("ARQUEO DE CAJA", bold=True)
+    opened = f"Apertura {cash['opening_time'][:5]}" if cash["opened"] else "Caja sin apertura registrada"
+    if cash["cashier"]:
+        opened += f" - {cash['cashier']}"
+    ticket.add(opened)
+    ticket.row("Efectivo inicial", money(cash["cash_start"]))
+    ticket.row("Fondo para imprevistos", money(cash["reserve"]))
+    ticket.row("+ Ventas en efectivo (neto)", money(summary["cash_net"]))
+    ticket.row("- Gastos en efectivo", money(cash["expenses_cash"]))
+    if cash["moto_cash_from_drawer"]:
+        ticket.row("- Motos en efectivo", money(cash["moto_cash_from_drawer"]))
+    ticket.row("EFECTIVO ESPERADO", money(cash["expected_cash"]), bold=True, size="tall")
+    if cash["counted_cash"] is not None:
+        ticket.row("Efectivo contado", money(cash["counted_cash"]), bold=True)
+        difference = cash["difference"]
+        label = "SOBRANTE" if difference > 0 else "FALTANTE" if difference < 0 else "CUADRA"
+        ticket.row(label, money(abs(difference)), bold=True, size="tall")
+    ticket.blank()
+    ticket.row("QR inicial", money(cash["qr_start"]))
+    ticket.row("+ Ventas por QR (neto)", money(summary["qr_net"]))
+    ticket.row("- Gastos por QR", money(cash["expenses_qr"]))
+    if cash["moto_qr_from_drawer"]:
+        ticket.row("- Motos por QR", money(cash["moto_qr_from_drawer"]))
+    ticket.row("QR ESPERADO", money(cash["expected_qr"]), bold=True)
+    if cash["expenses"]:
+        ticket.separator()
+        ticket.add("GASTOS E IMPREVISTOS", bold=True)
+        for expense in cash["expenses"]:
+            ticket.row(f"{expense['time'][:5]} {expense['reason']} ({expense['method']})", money(expense["amount"]))
+        if cash["reserve"]:
+            ticket.row("Queda del fondo de imprevistos", money(cash["reserve_left"]))
+    ticket.separator()
+
+
 def day_summary_ticket(local_name: str, summary: dict, date_label: str, columns: int = 48,
-                       now: datetime.datetime = None) -> Ticket:
+                       now: datetime.datetime = None, cash: dict = None) -> Ticket:
     ticket = Ticket(columns)
     ticket.add(local_name, bold=True, size="tall", align="center")
     ticket.add(f"CIERRE DE CAJA - {date_label}", bold=True, align="center")
     ticket.add(f"Impreso {_stamp(now)}", align="center")
     ticket.separator()
+    has_cash = bool(cash and (cash["opened"] or cash["expenses"] or cash["counted_cash"] is not None))
+    if has_cash:
+        _cash_block(ticket, summary, cash)
     if not summary["orders"]:
         ticket.add("No hay ventas cobradas en esta jornada.")
         return ticket

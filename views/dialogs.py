@@ -4,7 +4,7 @@ import html
 import math
 import os
 
-from PyQt6.QtCore import QDate, Qt, QUrl
+from PyQt6.QtCore import QDate, QSize, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QDoubleValidator
 from PyQt6.QtWidgets import (
     QButtonGroup, QComboBox, QDateEdit, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -683,7 +683,262 @@ class PaymentDialog(QDialog):
 # ---------------------------------------------------------------------------
 #  Resumen del dia / cierre de caja
 # ---------------------------------------------------------------------------
-def day_summary_html(summary: dict, date_label: str, local_name: str, colors: dict = None) -> str:
+def _amount_field(placeholder: str = "0") -> QLineEdit:
+    field = QLineEdit()
+    field.setObjectName("bigInput")
+    field.setPlaceholderText(placeholder)
+    validator = QDoubleValidator(0.00, 999999.99, 2)
+    validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+    field.setValidator(validator)
+    return field
+
+
+def _amount_value(field: QLineEdit) -> float:
+    text = field.text().strip().replace(",", ".")
+    try:
+        return round(float(text), 2) if text else 0.0
+    except ValueError:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+#  Caja: apertura y gastos
+# ---------------------------------------------------------------------------
+class CashOpeningDialog(QDialog):
+    """Apertura de caja: no es obligatoria y se puede corregir despues."""
+
+    def __init__(self, parent=None, current: dict = None):
+        super().__init__(parent)
+        self.current = current or {}
+        self.correcting = bool(current)
+        self.setWindowTitle("Corregir apertura" if self.correcting else "Abrir caja")
+        self.setMinimumWidth(460)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = _dialog_layout(
+            self, "CORREGIR APERTURA" if self.correcting else "\U0001F4B0  ABRIR CAJA",
+            "Con lo que hay al empezar, el cierre calcula cuánto debería haber en la caja y en el QR.")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+        self.cash_input = _amount_field()
+        self.qr_input = _amount_field()
+        self.reserve_input = _amount_field()
+        fields = (
+            ("\U0001F4B5 Efectivo inicial (sencillo para cambio)", self.cash_input, "cash"),
+            ("\U0001F4F1 Saldo inicial del QR", self.qr_input, "qr"),
+            ("\U0001F9F0 Fondo para imprevistos", self.reserve_input, "reserve"),
+        )
+        for row, (label, field, key) in enumerate(fields):
+            grid.addWidget(make_label(label, "muted"), row * 2, 0)
+            grid.addWidget(field, row * 2 + 1, 0)
+            if self.current.get(key):
+                field.setText(f"{self.current[key]:g}")
+        layout.addLayout(grid)
+
+        layout.addWidget(make_label("Cajero (opcional)", "muted"))
+        self.cashier_input = QLineEdit(self.current.get("cashier", ""))
+        self.cashier_input.setMaxLength(40)
+        layout.addWidget(self.cashier_input)
+
+        self.total_label = make_label("", "hint")
+        layout.addWidget(self.total_label)
+        for field in (self.cash_input, self.reserve_input):
+            field.textChanged.connect(lambda _t: self._update_total())
+        self._update_total()
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(make_button("Cancelar", "ghostButton", self.reject))
+        ok = make_button("Guardar corrección" if self.correcting else "Abrir caja", "primaryButton", self.accept)
+        ok.setDefault(True)
+        buttons.addWidget(ok, 1)
+        layout.addLayout(buttons)
+        self.cash_input.setFocus()
+
+    def _update_total(self):
+        total = _amount_value(self.cash_input) + _amount_value(self.reserve_input)
+        self.total_label.setText(f"Efectivo en la caja al abrir: {money(total)} (inicial + imprevistos)")
+
+    def values(self) -> dict:
+        return {
+            "cash": _amount_value(self.cash_input),
+            "qr": _amount_value(self.qr_input),
+            "reserve": _amount_value(self.reserve_input),
+            "cashier": self.cashier_input.text().strip(),
+        }
+
+
+class ExpenseDialog(QDialog):
+    """Gasto o imprevisto que sale de la caja (hielo, gas, verduras...)."""
+
+    QUICK_REASONS = ("Hielo", "Gas", "Verduras", "Carne", "Tortillas", "Limpieza", "Bolsas")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Registrar gasto")
+        self.setMinimumWidth(460)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = _dialog_layout(self, "\u2796  GASTO O IMPREVISTO",
+                                "Lo que sale de la caja se descuenta del efectivo o QR esperado al cierre.")
+        layout.addWidget(make_label("Monto", "muted"))
+        self.amount_input = _amount_field()
+        layout.addWidget(self.amount_input)
+
+        layout.addWidget(make_label("Sale de", "muted"))
+        row, self.method_group, self.method_buttons = _segmented(
+            [("Efectivo", "\U0001F4B5  Efectivo"), ("QR", "\U0001F4F1  QR")], "Efectivo")
+        self.method_group.setParent(self)
+        self.method_buttons["Efectivo"].setProperty("method", "cash")
+        self.method_buttons["QR"].setProperty("method", "qr")
+        layout.addLayout(row)
+
+        layout.addWidget(make_label("Motivo", "muted"))
+        self.reason_input = QLineEdit()
+        self.reason_input.setMaxLength(80)
+        self.reason_input.setPlaceholderText("Ej: hielo, gas, pago de limpieza")
+        layout.addWidget(self.reason_input)
+        quick = QGridLayout()
+        quick.setSpacing(6)
+        for i, reason in enumerate(self.QUICK_REASONS):
+            button = make_button(reason, "chip")
+            button.setAutoDefault(False)
+            button.clicked.connect(lambda _c=False, r=reason: self.reason_input.setText(r))
+            quick.addWidget(button, i // 4, i % 4)
+        layout.addLayout(quick)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(make_button("Cancelar", "ghostButton", self.reject))
+        ok = make_button("Registrar gasto", "primaryButton", self._accept_if_valid)
+        ok.setDefault(True)
+        buttons.addWidget(ok, 1)
+        layout.addLayout(buttons)
+        self.amount_input.setFocus()
+
+    def _accept_if_valid(self):
+        if _amount_value(self.amount_input) <= 0:
+            QMessageBox.warning(self, "Monto", "Ingresa el monto del gasto.")
+            return
+        if not self.reason_input.text().strip():
+            QMessageBox.warning(self, "Motivo", "Escribe o elige el motivo del gasto.")
+            return
+        self.accept()
+
+    def values(self) -> dict:
+        return {
+            "amount": _amount_value(self.amount_input),
+            "method": "QR" if self.method_buttons["QR"].isChecked() else "Efectivo",
+            "reason": self.reason_input.text().strip(),
+        }
+
+
+# ---------------------------------------------------------------------------
+#  Inventario (agotado / disponible)
+# ---------------------------------------------------------------------------
+class InventoryDialog(QDialog):
+    """
+    Marcar productos agotados. Se aplica al instante: la caja y los celulares
+    dejan de ofrecerlos hasta marcarlos disponibles de nuevo.
+    """
+
+    def __init__(self, order_manager, menu: dict, categories, parent=None):
+        super().__init__(parent)
+        self.order_manager = order_manager
+        self.menu = menu
+        self.categories = [c for c in categories if c in menu] or list(menu)
+        self.toggles = {}
+        self.setWindowTitle("Inventario")
+        self.setMinimumSize(480, 560)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = _dialog_layout(
+            self, "\U0001F964  INVENTARIO",
+            "Toca un producto para marcarlo agotado o disponible. Los meseros lo ven al instante.")
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("\U0001F50D  Buscar bebida…")
+        self.filter_input.textChanged.connect(lambda _t: self._apply_filter())
+        layout.addWidget(self.filter_input)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        layout.addWidget(self.list_widget, 1)
+        self.rows = []
+        items = [(c, d, v) for c in self.categories for d, variants in self.menu[c].items() for v in variants]
+        # Tambien lo que se marco agotado desde otra categoria (clic derecho en el menu)
+        for entry in self.order_manager.inventory.unavailable():
+            key = (entry["categoria"], entry["platillo"], entry["variante"])
+            if key not in items:
+                items.append(key)
+        for category, dish, variant in items:
+            self._add_row(category, dish, variant)
+
+        self.status_label = make_label("", "hint")
+        layout.addWidget(self.status_label)
+        buttons = QHBoxLayout()
+        buttons.addWidget(make_button("Marcar todo disponible", "ghostButton", self.mark_all_available))
+        buttons.addStretch()
+        buttons.addWidget(make_button("Listo", "primaryButton", self.accept))
+        layout.addLayout(buttons)
+        self._update_status()
+
+    def _add_row(self, category, dish, variant):
+        item = QListWidgetItem()
+        row = QFrame()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(6, 2, 6, 2)
+        label = make_label(f"{dish}  ·  {variant}")
+        row_layout.addWidget(label, 1)
+        toggle = make_button("", "stockToggle")
+        toggle.setCheckable(True)
+        toggle.setMinimumWidth(130)
+        toggle.setMinimumHeight(36)
+        toggle.clicked.connect(lambda checked, key=(category, dish, variant): self.set_available(key, checked))
+        row_layout.addWidget(toggle)
+        # El alto se fija: el estilo (padding) se aplica despues y la fila quedaria corta
+        item.setSizeHint(QSize(0, 48))
+        self.list_widget.addItem(item)
+        self.list_widget.setItemWidget(item, row)
+        key = (category, dish, variant)
+        self.toggles[key] = toggle
+        self.rows.append((key, item))
+        self._paint(key)
+
+    def _paint(self, key):
+        available = self.order_manager.inventory.is_available(*key)
+        toggle = self.toggles[key]
+        toggle.setChecked(available)
+        toggle.setText("\u2714 Disponible" if available else "\u2716 AGOTADO")
+        set_prop(toggle, "available", available)
+
+    def set_available(self, key, available: bool):
+        self.order_manager.inventory.set_available(*key, available)
+        self._paint(key)
+        self._update_status()
+
+    def mark_all_available(self):
+        self.order_manager.inventory.mark_all_available()
+        for key in self.toggles:
+            self._paint(key)
+        self._update_status()
+
+    def _apply_filter(self):
+        from utils.icons import normalize_text
+
+        tokens = normalize_text(self.filter_input.text()).split()
+        for (category, dish, variant), item in self.rows:
+            haystack = normalize_text(f"{dish} {variant} {category}")
+            item.setHidden(not all(t in haystack for t in tokens))
+
+    def _update_status(self):
+        count = len(self.order_manager.inventory.unavailable())
+        self.status_label.setText(f"{count} producto(s) agotado(s)" if count else "Todo disponible")
+
+
+def day_summary_html(summary: dict, date_label: str, local_name: str, colors: dict = None,
+                     cash: dict = None) -> str:
     """HTML del cierre. Sin `colors` sale en blanco y negro para la impresora."""
     heading = colors["accent"] if colors else "#000000"
     muted = colors["muted"] if colors else "#555555"
@@ -701,18 +956,50 @@ def day_summary_html(summary: dict, date_label: str, local_name: str, colors: di
         f"<h2 style='margin-bottom:0'>{html.escape(local_name)}</h2>",
         f"<p style='margin-top:2px; color:{muted}'>Cierre de caja - {html.escape(date_label)}</p>",
     ]
+    has_cash = bool(cash and (cash["opened"] or cash["expenses"] or cash["counted_cash"] is not None))
+    if has_cash:
+        parts.append("<table width='100%' cellspacing='0' cellpadding='0'>")
+        parts.append(section("Arqueo de caja"))
+        opened = f"Abierta a las {cash['opening_time'][:5]}" if cash["opened"] else "Sin apertura registrada"
+        if cash["cashier"]:
+            opened += f" · {cash['cashier']}"
+        parts.append(row(opened, ""))
+        parts.append(row("Efectivo inicial", money(cash["cash_start"])))
+        parts.append(row("Fondo para imprevistos", money(cash["reserve"])))
+        parts.append(row("+ Ventas en efectivo (neto)", money(summary["cash_net"])))
+        parts.append(row("− Gastos en efectivo", money(cash["expenses_cash"])))
+        if cash["moto_cash_from_drawer"]:
+            parts.append(row("− Motos pagadas en efectivo", money(cash["moto_cash_from_drawer"])))
+        parts.append(row("Efectivo esperado", money(cash["expected_cash"]), bold=True))
+        if cash["counted_cash"] is not None:
+            parts.append(row(f"Efectivo contado ({cash['count_time'][:5]})", money(cash["counted_cash"]), bold=True))
+        parts.append(row("QR inicial", money(cash["qr_start"])))
+        parts.append(row("+ Ventas por QR (neto)", money(summary["qr_net"])))
+        parts.append(row("− Gastos por QR", money(cash["expenses_qr"])))
+        if cash["moto_qr_from_drawer"]:
+            parts.append(row("− Motos pagadas por QR", money(cash["moto_qr_from_drawer"])))
+        parts.append(row("QR esperado", money(cash["expected_qr"]), bold=True))
+        if cash["expenses"]:
+            parts.append(section("Gastos e imprevistos"))
+            for expense in cash["expenses"]:
+                parts.append(row(f"{expense['time'][:5]}  {expense['reason']} ({expense['method']})",
+                                 money(expense["amount"])))
+            if cash["reserve"]:
+                parts.append(row("Queda del fondo de imprevistos", money(cash["reserve_left"])))
+        parts.append("</table>")
+
     if not summary["orders"]:
         parts.append("<p>No hay ventas cobradas en esta jornada.</p>")
         return "".join(parts)
 
     parts.append("<table width='100%' cellspacing='0' cellpadding='0'>")
+    parts.append(section("Ventas"))
     parts.append(row("Pedidos cobrados", summary["orders"]))
     parts.append(row("Total vendido", money(summary["total"]), bold=True))
     parts.append(row("Ticket promedio", money(summary["average_ticket"])))
     parts.append(row("Horario de ventas", f"{summary['first_time']} a {summary['last_time']}"))
-    parts.append(section("Caja"))
-    parts.append(row("Efectivo neto en caja", money(summary["cash_net"]), bold=True))
-    parts.append(row("QR neto", money(summary["qr_net"]), bold=True))
+    parts.append(row("Efectivo neto de ventas", money(summary["cash_net"])))
+    parts.append(row("QR neto de ventas", money(summary["qr_net"])))
     parts.append(row("Cambio dado en efectivo", money(summary["change_cash"])))
     parts.append(row("Cambio dado por QR", money(summary["change_qr"])))
     if summary["moto_orders"]:
@@ -738,7 +1025,7 @@ class DaySummaryDialog(QDialog):
         self.local_name = local_name
         self.colors = colors
         self.setWindowTitle("Resumen del día")
-        self.resize(620, 720)
+        self.resize(640, 780)
         self.setup_ui()
         self.refresh()
 
@@ -765,8 +1052,8 @@ class DaySummaryDialog(QDialog):
         kpis.setSpacing(10)
         self.kpi_labels = {}
         for i, (key, title) in enumerate((("total", "Total vendido"), ("orders", "Pedidos"),
-                                          ("cash_net", "\U0001F4B5 Efectivo en caja"),
-                                          ("qr_net", "\U0001F4F1 QR neto"))):
+                                          ("expected_cash", "\U0001F4B5 Efectivo esperado"),
+                                          ("expected_qr", "\U0001F4F1 QR esperado"))):
             card = QFrame()
             card.setObjectName("productCard")
             card_layout = QVBoxLayout(card)
@@ -778,14 +1065,29 @@ class DaySummaryDialog(QDialog):
             kpis.addWidget(card, i // 2, i % 2)
         layout.addLayout(kpis)
 
+        # Arqueo: el cajero cuenta los billetes y ve si sobra o falta
+        count_row = QHBoxLayout()
+        count_row.addWidget(make_label("Efectivo contado", "muted"))
+        self.count_input = _amount_field("¿Cuánto hay en la caja?")
+        self.count_input.returnPressed.connect(self.save_count)
+        count_row.addWidget(self.count_input, 1)
+        self.count_btn = make_button("Guardar arqueo", "successButton", self.save_count)
+        count_row.addWidget(self.count_btn)
+        layout.addLayout(count_row)
+        self.difference_label = make_label("", "resultBox")
+        self.difference_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.difference_label)
+
         self.browser = QTextBrowser()
         layout.addWidget(self.browser, 1)
 
         buttons = QHBoxLayout()
+        self.expense_btn = make_button("\u2796  Gasto", "secondaryButton", self.add_expense)
+        self.void_btn = make_button("Anular gasto", "ghostButton", self.void_expense)
         self.print_btn = make_button("\U0001F5A8  Imprimir", "secondaryButton", self.print_summary)
-        self.excel_btn = make_button("\U0001F4CA  Abrir Excel", "secondaryButton", self.open_excel)
-        buttons.addWidget(self.print_btn)
-        buttons.addWidget(self.excel_btn)
+        self.excel_btn = make_button("\U0001F4CA  Excel", "secondaryButton", self.open_excel)
+        for button in (self.expense_btn, self.void_btn, self.print_btn, self.excel_btn):
+            buttons.addWidget(button)
         buttons.addStretch()
         buttons.addWidget(make_button("Cerrar", "primaryButton", self.accept))
         layout.addLayout(buttons)
@@ -796,21 +1098,69 @@ class DaySummaryDialog(QDialog):
     def refresh(self):
         date = self.selected_date()
         self.summary = self.order_manager.day_summary(date)
+        self.cash = self.order_manager.cash_summary(date, self.summary)
         label = date.strftime("%d/%m/%Y")
         self.kpi_labels["total"].setText(money(self.summary["total"]))
         self.kpi_labels["orders"].setText(str(self.summary["orders"]))
-        self.kpi_labels["cash_net"].setText(money(self.summary["cash_net"]))
-        self.kpi_labels["qr_net"].setText(money(self.summary["qr_net"]))
-        self.browser.setHtml(day_summary_html(self.summary, label, self.local_name, self.colors))
+        self.kpi_labels["expected_cash"].setText(money(self.cash["expected_cash"]))
+        self.kpi_labels["expected_qr"].setText(money(self.cash["expected_qr"]))
+        self.browser.setHtml(day_summary_html(self.summary, label, self.local_name, self.colors, self.cash))
+        self.void_btn.setEnabled(bool(self.cash["expenses"]))
+        difference = self.cash["difference"]
+        if difference is None:
+            self.difference_label.setText("Cuenta el efectivo de la caja para ver si sobra o falta")
+            set_prop(self.difference_label, "state", "")
+        elif abs(difference) < 0.005:
+            self.difference_label.setText(f"CUADRA  ·  contado {money(self.cash['counted_cash'])}")
+            set_prop(self.difference_label, "state", "ok")
+        elif difference > 0:
+            self.difference_label.setText(f"SOBRAN  {money(difference)}")
+            set_prop(self.difference_label, "state", "change")
+        else:
+            self.difference_label.setText(f"FALTAN  {money(-difference)}")
+            set_prop(self.difference_label, "state", "missing")
+
+    def save_count(self):
+        if not self.count_input.text().strip():
+            QMessageBox.warning(self, "Arqueo", "Escribe cuánto efectivo contaste en la caja.")
+            return
+        self.order_manager.cash.set_count(_amount_value(self.count_input), date=self.selected_date())
+        self.count_input.clear()
+        self.refresh()
+
+    def add_expense(self):
+        dialog = ExpenseDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        try:
+            self.order_manager.cash.add_expense(values["amount"], values["method"], values["reason"],
+                                                date=self.selected_date())
+        except ValueError as e:
+            QMessageBox.warning(self, "Gasto", str(e))
+            return
+        self.refresh()
+
+    def void_expense(self):
+        from PyQt6.QtWidgets import QInputDialog
+
+        expenses = self.cash["expenses"]
+        if not expenses:
+            return
+        labels = [f"{e['time'][:5]}  {e['reason']}  ·  {money(e['amount'])} ({e['method']})" for e in expenses]
+        choice, ok = QInputDialog.getItem(self, "Anular gasto", "Gasto registrado por error:", labels, 0, False)
+        if ok and choice:
+            self.order_manager.cash.void_expense(expenses[labels.index(choice)]["id"], date=self.selected_date())
+            self.refresh()
 
     def print_summary(self):
         parent = self.parent()
         if parent is not None and hasattr(parent, "print_day_summary"):
-            parent.print_day_summary(self.summary, self.selected_date().strftime("%d/%m/%Y"))
+            parent.print_day_summary(self.summary, self.selected_date().strftime("%d/%m/%Y"), self.cash)
 
     def open_excel(self):
         date = self.selected_date()
-        if self.summary["orders"]:
+        if self.summary["orders"] or self.cash["opened"] or self.cash["expenses"]:
             self.order_manager.refresh_daily_excel(date)
         path = self.order_manager.daily_excel_path(date)
         if not os.path.exists(path):
@@ -833,6 +1183,9 @@ class PrinterDialog(QDialog):
     PAPERS = ((80, "80 mm · 48 columnas"), (58, "58 mm · 32 columnas"))
     FONT_SIZES = (("normal", "Normal (recomendada): platillos de 3 mm, platos en alto doble"),
                   ("grande", "Grande: platillos en alto doble, para leer de lejos"))
+    WAITER_MODES = (("comanda_y_cuenta", "Sí: comandas y cuentas"),
+                    ("solo_comanda", "Solo comandas"),
+                    ("no", "No, solo la caja imprime"))
 
     def __init__(self, config: dict, root: str, local_name: str, parent=None, printers=None, default=None):
         super().__init__(parent)
@@ -886,6 +1239,14 @@ class PrinterDialog(QDialog):
         self.font_combo.setCurrentIndex(max(0, self.font_combo.findData(self.config.get("letra_comanda", "normal"))))
         layout.addWidget(self.font_combo)
 
+        layout.addWidget(make_label("Los meseros pueden imprimir desde el celular", "muted"))
+        self.waiter_combo = QComboBox()
+        for value, text in self.WAITER_MODES:
+            self.waiter_combo.addItem(text, value)
+        self.waiter_combo.setCurrentIndex(
+            max(0, self.waiter_combo.findData(self.config.get("meseros_imprimen", "comanda_y_cuenta"))))
+        layout.addWidget(self.waiter_combo)
+
         self.result_label = make_label("", "hint", wrap=True)
         layout.addWidget(self.result_label)
 
@@ -907,6 +1268,7 @@ class PrinterDialog(QDialog):
             "modo_impresion": self.mode_combo.currentData(),
             "ancho_papel_mm": int(self.paper_combo.currentData()),
             "letra_comanda": self.font_combo.currentData(),
+            "meseros_imprimen": self.waiter_combo.currentData(),
         }
 
     def _printer_for_selection(self) -> TicketPrinter:

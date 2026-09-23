@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from models import reports
+from models.cash import CashRegister, cash_summary
+from models.inventory import Inventory, UnavailableError
 from utils.config import atomic_write_text, business_date, data_root, day_dir, load_config
 
 ORDER_TYPE_LOCAL = "En el local"
@@ -67,23 +69,30 @@ class OrderManager:
     """
 
     def __init__(self, root: Optional[str] = None, cutoff_hour: Optional[int] = None,
-                 restore: bool = True, plate_products: Optional[Iterable[str]] = None):
+                 restore: bool = True, plate_products: Optional[Iterable[str]] = None,
+                 motos_from_drawer: Optional[bool] = None):
         self.root = root or data_root()
         os.makedirs(self.root, exist_ok=True)
-        if cutoff_hour is None or plate_products is None:
+        if cutoff_hour is None or plate_products is None or motos_from_drawer is None:
             config = load_config(self.root)
             if cutoff_hour is None:
                 cutoff_hour = int(config.get("hora_corte_jornada", 4))
             if plate_products is None:
                 plate_products = config.get("productos_con_plato", DEFAULT_PLATE_PRODUCTS)
+            if motos_from_drawer is None:
+                motos_from_drawer = bool(config.get("motos_salen_de_caja", True))
         self.cutoff_hour = cutoff_hour
         self.plate_products = [str(p) for p in plate_products]
         self._plate_products_norm = {self._norm(p) for p in self.plate_products}
+        self.motos_from_drawer = motos_from_drawer
 
         self._lock = threading.RLock()
         self._excel_lock = threading.Lock()
         self._orders: "OrderedDict[str, Dict]" = OrderedDict()
         self._listeners: List[Listener] = []
+        # Caja de la jornada y productos agotados (archivos propios en data/)
+        self.cash = CashRegister(self.root, self.today, self._audit, self._notify)
+        self.inventory = Inventory(self.root, self._audit, self._notify)
         self._counter_date = ""
         self._counter = 0
         self.last_save_error = ""
@@ -383,6 +392,14 @@ class OrderManager:
             prepared.extend(dict(unit) for _ in range(qty))
         if not prepared:
             return 0
+        # Lo agotado no entra al pedido (ni desde la caja ni desde los celulares)
+        unavailable = []
+        for unit in prepared:
+            key = (unit["category"], unit["dish"], unit["variant"])
+            if key not in unavailable and not self.inventory.is_available(*key):
+                unavailable.append(key)
+        if unavailable:
+            raise UnavailableError(unavailable)
 
         with self._lock:
             order = self._get(table_name)
@@ -739,14 +756,24 @@ class OrderManager:
     #  Reportes
     # -----------------------------------------------
     def refresh_daily_excel(self, date: Optional[datetime.date] = None) -> Tuple[bool, str]:
+        date = date or self.today()
         with self._excel_lock:
-            return reports.write_daily_excel(self.root, date or self.today())
+            return reports.write_daily_excel(self.root, date, cash=self.cash_summary(date))
 
     def daily_excel_path(self, date: Optional[datetime.date] = None) -> str:
         return reports.excel_path(self.root, date or self.today())
 
     def day_summary(self, date: Optional[datetime.date] = None) -> Dict:
         return reports.summarize(reports.read_sales(self.root, date or self.today()))
+
+    def cash_summary(self, date: Optional[datetime.date] = None, sales: Optional[Dict] = None) -> Dict:
+        """Apertura, gastos, lo que deberia haber en caja y el arqueo de la jornada."""
+        date = date or self.today()
+        return cash_summary(self.cash.load(date), sales or self.day_summary(date), self.motos_from_drawer)
+
+    def record(self, action: str, table_name: str, detail: str = ""):
+        """Deja una linea en la auditoria del dia (p. ej. impresiones desde el celular)."""
+        self._audit(action, table_name, detail)
 
     def export_snapshot(self, path: str) -> Tuple[bool, str]:
         with self._lock:

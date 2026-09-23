@@ -1,6 +1,7 @@
 import datetime
 import html
 import os
+import threading
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QKeySequence, QPalette, QPixmap, QShortcut
@@ -20,8 +21,8 @@ from utils.styles import THEME_NAMES, ThemeManager
 from utils import tickets
 from utils.printer import PrinterError, TicketPrinter
 from views.dialogs import (
-    AddOrderDialog, DaySummaryDialog, DeliveryDialog, EditTableDialog, PaymentDialog, PlateDialog,
-    PrinterDialog,
+    AddOrderDialog, CashOpeningDialog, DaySummaryDialog, DeliveryDialog, EditTableDialog, ExpenseDialog,
+    InventoryDialog, PaymentDialog, PlateDialog, PrinterDialog,
 )
 from views.widgets import (
     PRODUCT_CARD_MIN_WIDTH, FlowLayout, OrderCard, ProductCard, TicketLine, Toast, clear_layout,
@@ -56,6 +57,8 @@ class ProvaRestaurant(QMainWindow):
 
     # Emitida desde cualquier hilo (p. ej. el servidor de meseros); Qt la entrega en el hilo de la UI
     orders_changed = pyqtSignal(str, str, dict)
+    # El servidor (otro hilo) pide imprimir; la impresion se hace en el hilo de la caja
+    waiter_print_requested = pyqtSignal(object)
 
     def __init__(self, order_manager: OrderManager = None, menu_data: MenuData = None,
                  config: dict = None):
@@ -89,6 +92,7 @@ class ProvaRestaurant(QMainWindow):
         self.reload_menu()
 
         self.orders_changed.connect(self._on_orders_changed)
+        self.waiter_print_requested.connect(self._run_waiter_print)
         self.order_manager.add_listener(
             lambda event, table, info: self.orders_changed.emit(event, table or "", dict(info)))
         self.refresh_orders()
@@ -109,6 +113,8 @@ class ProvaRestaurant(QMainWindow):
             QTimer.singleShot(500, lambda: self.toast.show_message(
                 f"Se recuperaron {self.order_manager.restored_count} pedido(s) abiertos "
                 f"de la sesión anterior.", "warning", 6000))
+        # La apertura no es obligatoria: solo se recuerda
+        QTimer.singleShot(7000 if self.order_manager.restored_count else 800, self._remind_cash_opening)
 
     @property
     def current_table(self):
@@ -175,11 +181,15 @@ class ProvaRestaurant(QMainWindow):
         layout.addWidget(self.jornada_label)
         layout.addStretch()
 
-        self.waiters_btn = make_button("\U0001F4F1  Meseros: iniciando...", "headerChip",
+        self.cash_btn = make_button("", "headerChip", self.on_cash_button,
+                                    "Apertura de caja, gastos e imprevistos")
+        self.inventory_btn = make_button("", "headerChip", self.open_inventory,
+                                         "Marcar bebidas agotadas: los meseros no las pueden pedir")
+        self.waiters_btn = make_button("\U0001F4F1  Meseros", "headerChip",
                                        self.show_waiter_access,
                                        "Dirección y PIN para los celulares de los meseros")
-        self.summary_btn = make_button("\U0001F4CA  Resumen del día", "headerChip", self.show_day_summary,
-                                       "Cierre de caja: efectivo, QR y productos vendidos")
+        self.summary_btn = make_button("\U0001F4CA  Cierre", "headerChip", self.show_day_summary,
+                                       "Cierre de caja: efectivo esperado, arqueo, gastos y ventas")
         self.theme_btn = make_button("", "headerChip", self.toggle_theme)
         self.more_btn = make_button("⋯", "iconButton", tooltip="Más opciones")
         more_menu = QMenu(self)
@@ -189,8 +199,11 @@ class ProvaRestaurant(QMainWindow):
         more_menu.addAction("\U0001F5A8  Impresora de tickets…", lambda _=False: self.open_printer_settings())
         more_menu.addAction("\U0001F511  Cambiar PIN de meseros", lambda _=False: self.change_waiter_pin())
         self.more_btn.setMenu(more_menu)
-        for widget in (self.waiters_btn, self.summary_btn, self.theme_btn, self.more_btn):
+        for widget in (self.cash_btn, self.inventory_btn, self.waiters_btn, self.summary_btn,
+                       self.theme_btn, self.more_btn):
             layout.addWidget(widget)
+        self._update_cash_button()
+        self._update_inventory_button()
         return header
 
     def _build_orders_panel(self) -> QFrame:
@@ -435,12 +448,16 @@ class ProvaRestaurant(QMainWindow):
 
     def _update_clock(self):
         now = datetime.datetime.now()
-        self.jornada_label.setText(f"Jornada {self.order_manager.today():%d/%m}  ·  {now:%H:%M}")
+        text = f"Jornada {self.order_manager.today():%d/%m}  ·  {now:%H:%M}"
+        if self.waiter_url:
+            text += f"\nMeseros: {self.waiter_url.replace('http://', '')}"
+        self.jornada_label.setText(text)
 
     def _tick(self):
         self._update_clock()
         self.refresh_orders()
         self._update_ticket_meta()
+        self._update_cash_button()  # al pasar la hora de corte empieza otra jornada sin abrir
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -455,12 +472,13 @@ class ProvaRestaurant(QMainWindow):
             from server import WaiterServer, create_app, get_local_ip
 
             app = create_app(self.order_manager, self.menu_data, lambda: self.waiter_pin,
-                             int(self.config.get("numero_mesas", 13)))
+                             int(self.config.get("numero_mesas", 13)), printer=self)
             self.waiter_server = WaiterServer(app)
             port = self.waiter_server.start(int(self.config.get("puerto_meseros", 5000)))
             self.waiter_url = f"http://{get_local_ip()}:{port}"
-            self.waiters_btn.setText(f"\U0001F4F1  Meseros: {self.waiter_url.replace('http://', '')}")
+            self.waiters_btn.setToolTip(f"Meseros: {self.waiter_url}  ·  toca para ver el PIN")
             set_prop(self.waiters_btn, "status", "ok")
+            self._update_clock()
         except Exception as e:
             self.waiters_btn.setText("\U0001F4F1  Meseros sin conexión")
             set_prop(self.waiters_btn, "status", "error")
@@ -595,6 +613,7 @@ class ProvaRestaurant(QMainWindow):
                 self.product_cards.append(card)
                 for variant, button in card.buttons.items():
                     self.variant_buttons[(category, product, variant)] = button
+                    self._decorate_variant(button, category, product, variant)
                 shown += 1
         self._fit_product_cards()
         for category, button in self.category_buttons.items():
@@ -638,6 +657,10 @@ class ProvaRestaurant(QMainWindow):
         if price is None:
             self.toast.show_message(f"{dish} ({variant}) ya no está en el menú.", "error")
             return False
+        if not self.order_manager.inventory.is_available(category, dish, variant):
+            self.toast.show_message(f"Se acabó {dish} ({variant}). Cuando llegue, márcalo disponible "
+                                    f"en \U0001F964 Inventario o con clic derecho.", "error", 4000)
+            return False
         qty = self.qty_spin.value()
         plate = self.active_plate if self.order_manager.plate_applies(dish) else 0
         try:
@@ -656,6 +679,13 @@ class ProvaRestaurant(QMainWindow):
     #  Pedidos
     # ================================================================
     def _on_orders_changed(self, event: str, table: str, info: dict):
+        if event == "cash":
+            self._update_cash_button()
+            return
+        if event == "inventory":
+            self._update_inventory_button()
+            self.render_products()
+            return
         if event == "renamed" and info.get("old_name") == self._plate_table:
             self._plate_table = table
         self.refresh_orders()
@@ -1109,11 +1139,17 @@ class ProvaRestaurant(QMainWindow):
             lines = self.order_manager.get_order_lines(table)
             reprint_all = True
 
-        ticket = tickets.kitchen_ticket(self.local_name, order, table, lines, reprint_all,
-                                        self.ticket_printer.columns,
-                                        large_items=self.ticket_printer.large_kitchen_items)
-        if self.send_ticket(ticket, "Comanda"):
+        if self.send_ticket(self._kitchen_ticket(order, table, lines, reprint_all), "Comanda"):
             self.order_manager.mark_sent_to_kitchen(table)
+
+    def _kitchen_ticket(self, order: dict, table: str, lines: list, reprint: bool):
+        return tickets.kitchen_ticket(self.local_name, order, table, lines, reprint,
+                                      self.ticket_printer.columns,
+                                      large_items=self.ticket_printer.large_kitchen_items)
+
+    def _bill_ticket(self, order: dict, table: str, lines: list):
+        return tickets.customer_bill(self.local_name, self.config.get("ciudad", ""), order, table, lines,
+                                     self.ticket_printer.columns)
 
     def print_customer_bill(self):
         table = self._require_table("No hay nada para imprimir")
@@ -1124,13 +1160,163 @@ class ProvaRestaurant(QMainWindow):
         if not lines:
             self.toast.show_message("El pedido está vacío.", "warning")
             return
-        ticket = tickets.customer_bill(self.local_name, self.config.get("ciudad", ""), order, table, lines,
-                                       self.ticket_printer.columns)
-        self.send_ticket(ticket, "Cuenta")
+        self.send_ticket(self._bill_ticket(order, table, lines), "Cuenta")
 
-    def print_day_summary(self, summary: dict, date_label: str) -> bool:
-        ticket = tickets.day_summary_ticket(self.local_name, summary, date_label, self.ticket_printer.columns)
+    def print_day_summary(self, summary: dict, date_label: str, cash: dict = None) -> bool:
+        ticket = tickets.day_summary_ticket(self.local_name, summary, date_label, self.ticket_printer.columns,
+                                            cash=cash)
         return self.send_ticket(ticket, "Cierre de caja")
+
+    # ----------------------------------------------------------------
+    #  Impresion pedida desde el celular del mesero
+    # ----------------------------------------------------------------
+    def waiter_print_mode(self) -> str:
+        mode = self.config.get("meseros_imprimen", "comanda_y_cuenta")
+        return mode if mode in ("comanda_y_cuenta", "solo_comanda", "no") else "comanda_y_cuenta"
+
+    def print_for_waiter(self, kind: str, table: str, full: bool = False, timeout: float = 20):
+        """
+        Lo llama el servidor de meseros desde su hilo. La impresion se hace en el
+        hilo de la caja (Qt) y aca se espera el resultado para contestarle al celular.
+        """
+        job = {"kind": kind, "table": table, "full": full, "done": threading.Event(), "result": None}
+        self.waiter_print_requested.emit(job)
+        if not job["done"].wait(timeout):
+            return {"ok": False, "error": "La caja no respondió. Intenta de nuevo."}, 504
+        return job["result"]
+
+    def _run_waiter_print(self, job: dict):
+        try:
+            job["result"] = self._waiter_print(job["kind"], job["table"], job["full"])
+        except Exception as e:
+            job["result"] = ({"ok": False, "error": f"Error al imprimir: {e}"}, 500)
+        finally:
+            job["done"].set()
+
+    def _waiter_print(self, kind: str, table: str, full: bool):
+        order = self.order_manager.get_order(table)
+        if order is None:
+            return {"ok": False, "error": "La mesa ya no existe"}, 404
+        if kind == "comanda":
+            lines = self.order_manager.get_order_lines(table, kitchen_pending_only=not full)
+            if not lines:
+                if not order["items"]:
+                    return {"ok": False, "error": "El pedido está vacío."}, 409
+                return {"ok": False, "sin_nuevos": True,
+                        "error": "No hay platillos nuevos: la comanda ya se imprimió."}, 409
+            ticket, title = self._kitchen_ticket(order, table, lines, full), "Comanda"
+        else:
+            lines = self.order_manager.get_order_lines(table)
+            if not lines:
+                return {"ok": False, "error": "El pedido está vacío."}, 409
+            ticket, title = self._bill_ticket(order, table, lines), "Cuenta"
+        try:
+            printer_name = self.ticket_printer.print_ticket(ticket, f"PROVA {title} (mesero)")
+        except PrinterError as e:
+            self.toast.show_message(f"\U0001F4F1 Un mesero no pudo imprimir la {title.lower()}: {e}", "error", 6000)
+            return {"ok": False, "error": f"No se pudo imprimir: revisa que la impresora tenga papel y esté "
+                                          f"encendida, o avisa a la caja."}, 502
+        if kind == "comanda":
+            self.order_manager.mark_sent_to_kitchen(table)
+        self.order_manager.record("IMPRIME", table, f"{title.lower()}{' completa' if full else ''} origen=mesero")
+        self.toast.show_message(f"\U0001F4F1 Mesero imprimió la {title.lower()} de «{table}»", "info", 4000)
+        return {"ok": True, "mensaje": f"{title} de {table} enviada a {printer_name}"}, 200
+
+    # ----------------------------------------------------------------
+    #  Caja: apertura, gastos e imprevistos
+    # ----------------------------------------------------------------
+    def _update_cash_button(self):
+        if self.order_manager.cash.is_open():
+            self.cash_btn.setText("\U0001F4B0  Caja abierta")
+            set_prop(self.cash_btn, "status", "ok")
+        else:
+            self.cash_btn.setText("\U0001F4B0  Abrir caja")
+            set_prop(self.cash_btn, "status", "warn")
+
+    def _remind_cash_opening(self):
+        if not self.order_manager.cash.is_open():
+            self.toast.show_message("Caja sin abrir: toca «\U0001F4B0 Abrir caja» para registrar el efectivo, "
+                                    "el QR y el fondo de imprevistos.", "warning", 6000)
+
+    def on_cash_button(self):
+        if not self.order_manager.cash.is_open():
+            self.open_cash_register()
+            return
+        menu = QMenu(self)
+        menu.addAction("\u2796  Registrar gasto o imprevisto…", lambda _=False: self.register_expense())
+        menu.addAction("\u270E  Corregir apertura…", lambda _=False: self.open_cash_register())
+        menu.addSeparator()
+        menu.addAction("\U0001F4CA  Cierre de caja y arqueo…", lambda _=False: self.show_day_summary())
+        menu.exec(self.cash_btn.mapToGlobal(self.cash_btn.rect().bottomLeft()))
+
+    def open_cash_register(self) -> bool:
+        current = self.order_manager.cash.load()["opening"]
+        dialog = CashOpeningDialog(self, current)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        try:
+            self.order_manager.cash.open(values["cash"], values["qr"], values["reserve"], values["cashier"])
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Caja", str(e))
+            return False
+        self.order_manager.refresh_daily_excel()
+        total = values["cash"] + values["reserve"]
+        self.toast.show_message(f"\U0001F4B0 Caja {'corregida' if current else 'abierta'}: "
+                                f"{money(total)} en efectivo · QR {money(values['qr'])}", "success", 4000)
+        return True
+
+    def register_expense(self) -> bool:
+        dialog = ExpenseDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        try:
+            self.order_manager.cash.add_expense(values["amount"], values["method"], values["reason"])
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Gasto", str(e))
+            return False
+        self.order_manager.refresh_daily_excel()
+        self.toast.show_message(f"\u2796 Gasto registrado: {values['reason']} · {money(values['amount'])} "
+                                f"({values['method']})", "success", 3500)
+        return True
+
+    # ----------------------------------------------------------------
+    #  Inventario: productos agotados
+    # ----------------------------------------------------------------
+    def _update_inventory_button(self):
+        count = len(self.order_manager.inventory.unavailable())
+        self.inventory_btn.setText(f"\U0001F964  {count} agotado{'s' if count != 1 else ''}" if count
+                                   else "\U0001F964  Inventario")
+        set_prop(self.inventory_btn, "status", "error" if count else "")
+
+    def open_inventory(self):
+        categories = self.config.get("categorias_inventario", ["Bebidas"])
+        InventoryDialog(self.order_manager, self.menu_data.get_menu_prices(), categories, self).exec()
+
+    def _decorate_variant(self, button, category: str, dish: str, variant: str):
+        """Marca en el menu lo agotado y deja cambiarlo con clic derecho."""
+        available = self.order_manager.inventory.is_available(category, dish, variant)
+        if available:
+            button.setToolTip(f"{button.toolTip()}  ·  clic derecho: marcar agotado")
+        else:
+            button.setText(f"{variant}  ·  AGOTADO")
+            button.setToolTip(f"{dish} ({variant}) está agotado. Clic derecho para marcarlo disponible.")
+        set_prop(button, "soldOut", not available)
+        button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        button.customContextMenuRequested.connect(
+            lambda _pos, b=button: self._variant_menu(b, category, dish, variant))
+
+    def _variant_menu(self, button, category: str, dish: str, variant: str):
+        available = self.order_manager.inventory.is_available(category, dish, variant)
+        menu = QMenu(self)
+        if available:
+            menu.addAction(f"\u2716  Marcar «{dish} ({variant})» como AGOTADO",
+                           lambda _=False: self.order_manager.inventory.set_available(category, dish, variant, False))
+        else:
+            menu.addAction(f"\u2714  Marcar «{dish} ({variant})» como disponible",
+                           lambda _=False: self.order_manager.inventory.set_available(category, dish, variant, True))
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
     def open_printer_settings(self):
         PrinterDialog(self.config, self.order_manager.root, self.local_name, self).exec()

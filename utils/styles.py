@@ -148,6 +148,26 @@ class ThemeManager:
         #headerChip:hover {{ border-color: {t['primary']}; }}
         #headerChip[status="ok"] {{ border-color: {t['success']}; }}
         #headerChip[status="error"] {{ border-color: {t['danger']}; color: {t['danger']}; }}
+        #headerChip[status="warn"] {{
+            border: 2px solid {t['warning']};
+            color: {t['warning']};
+            background-color: {t['warning_soft']};
+        }}
+        #stockToggle {{
+            border-radius: 12px;
+            padding: 6px 12px;
+            font-weight: 700;
+        }}
+        #stockToggle[available="true"] {{
+            background-color: {t['success_soft']};
+            border: 1px solid {t['success']};
+            color: {t['success_hover'] if self.is_dark else t['success']};
+        }}
+        #stockToggle[available="false"] {{
+            background-color: {t['danger_soft']};
+            border: 1px solid {t['danger']};
+            color: {t['danger']};
+        }}
 
         /* ---------- Paneles ---------- */
         #panel {{
@@ -440,6 +460,11 @@ class ThemeManager:
             background-color: {t['surface']};
         }}
         #variantChip:pressed {{ background-color: {t['primary']}; color: {t['on_primary']}; }}
+        #variantChip[soldOut="true"] {{
+            background-color: {t['danger_soft']};
+            border: 1px dashed {t['danger']};
+            color: {t['danger']};
+        }}
         #variantChip[flash="true"] {{
             background-color: {t['success']};
             border-color: {t['success']};

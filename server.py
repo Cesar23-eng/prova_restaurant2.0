@@ -16,6 +16,7 @@ from collections import OrderedDict
 
 from flask import Flask, jsonify, render_template, request, send_file
 
+from models.inventory import UnavailableError
 from models.order import MAX_PLATES, ORDER_TYPE_LOCAL, ORDER_TYPES
 from utils.config import app_dir, resource_dir
 from utils.icons import menu_icons
@@ -33,10 +34,12 @@ def _minutes_since(stamp) -> int:
     return max(0, int((datetime.datetime.now() - started).total_seconds() // 60))
 
 
-def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
+def create_app(order_manager, menu_data, pin, table_count: int = 13, printer=None) -> Flask:
     """
     `pin` puede ser un texto o una funcion que devuelve el PIN vigente.
     `table_count` es la cantidad de botones rapidos "Mesa 1..N" en el celular.
+    `printer` imprime lo que piden los meseros en la impresora de la caja; debe
+    tener print_for_waiter(tipo, mesa, todo) -> (respuesta, status) y waiter_print_mode().
     """
     current_pin = pin if callable(pin) else (lambda: pin)
     app = Flask(__name__, template_folder=os.path.join(resource_dir(), "templates"))
@@ -94,6 +97,9 @@ def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
     def api_ping():
         return jsonify({"ok": True})
 
+    def waiter_print_mode() -> str:
+        return printer.waiter_print_mode() if printer is not None else "no"
+
     @app.route("/api/ajustes")
     def api_ajustes():
         return jsonify({
@@ -101,7 +107,14 @@ def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
             "max_platos": MAX_PLATES,
             "iconos": menu_icons(menu_data.get_menu_prices()),
             "numero_mesas": int(table_count),
+            "meseros_imprimen": waiter_print_mode(),
+            "agotados": order_manager.inventory.unavailable(),
         })
+
+    @app.route("/api/agotados")
+    def api_agotados():
+        """Productos que se acabaron: el celular los muestra tachados y no deja elegirlos."""
+        return jsonify({"ok": True, "agotados": order_manager.inventory.unavailable()})
 
     @app.route("/api/menu")
     def api_menu():
@@ -173,23 +186,29 @@ def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
             "total": round(sum(l["subtotal"] for l in lines), 2),
             "pagado": order["paid"],
             "metodo_pago": (order["payment"] or {}).get("method", ""),
+            # Platillos que todavia no salieron en una comanda de cocina
+            "sin_comanda": sum(l["pending_kitchen"] for l in lines),
         })
 
     def add_items_to_table(mesa: str, raw_items, request_id: str):
+        return run_once(request_id, lambda: _add_items(mesa, raw_items))
+
+    def run_once(request_id: str, action):
         """
         `request_id` lo genera el celular por cada envio. Si el WiFi se corta y el
-        mesero reintenta, el pedido no se duplica: se devuelve la respuesta original.
+        mesero reintenta, la accion no se repite (no se duplica el pedido ni se
+        imprime dos veces): se devuelve la respuesta original.
         """
         if not request_id:
-            return _add_items(mesa, raw_items)
+            return action()
         with guard:
             if request_id in processed_requests:
                 return jsonify(processed_requests[request_id])
             if request_id in requests_in_progress:
-                return error("El pedido se esta procesando, intenta de nuevo", 409)
+                return error("Se esta procesando, intenta de nuevo", 409)
             requests_in_progress.add(request_id)
         try:
-            result = _add_items(mesa, raw_items)
+            result = action()
             if isinstance(result, dict):
                 with guard:
                     processed_requests[request_id] = result
@@ -228,6 +247,8 @@ def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
 
         try:
             count = order_manager.add_items(name, items, source="mesero")
+        except UnavailableError as e:
+            return unavailable_error(e)
         except PermissionError:
             return error("Este pedido ya fue pagado", 409)
         except KeyError:
@@ -255,6 +276,40 @@ def create_app(order_manager, menu_data, pin, table_count: int = 13) -> Flask:
         if not mesa:
             return error("Faltan datos", 400)
         return add_items_to_table(mesa, [data], str(data.get("request_id") or ""))
+
+    def unavailable_error(exc: UnavailableError):
+        payload = {
+            "ok": False,
+            "error": f"{exc}. Quítalo del pedido.",
+            "agotados": [{"categoria": c, "platillo": d, "variante": v} for c, d, v in exc.items],
+        }
+        return jsonify(payload), 409
+
+    @app.route("/api/pedido/<path:mesa_nombre>/imprimir", methods=["POST"])
+    def api_imprimir(mesa_nombre):
+        """
+        El mesero imprime la comanda o la cuenta en la impresora de la caja.
+        Body: {tipo: "comanda" | "cuenta", todo: bool, request_id}
+        """
+        data = request.get_json(silent=True) or {}
+        kind = data.get("tipo")
+        if kind not in ("comanda", "cuenta"):
+            return error("Tipo de impresion invalido", 400)
+        if printer is None:
+            return error("La caja no tiene la impresion disponible", 503)
+        mode = waiter_print_mode()
+        if mode == "no" or (kind == "cuenta" and mode == "solo_comanda"):
+            return error("La caja no permite que los meseros impriman esto", 403)
+        name = order_manager.resolve_name(mesa_nombre.strip())
+        if name is None:
+            return error("Mesa no encontrada", 404)
+
+        def do_print():
+            payload, status = printer.print_for_waiter(kind, name, bool(data.get("todo")))
+            return payload if status == 200 else (jsonify(payload), status)
+
+        request_id = str(data.get("request_id") or "")
+        return run_once(f"imprimir:{request_id}" if request_id else "", do_print)
 
     return app
 

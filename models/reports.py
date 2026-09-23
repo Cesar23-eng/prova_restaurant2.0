@@ -265,7 +265,42 @@ def _order_row(record: Dict, paid_label: str, with_time: bool) -> Tuple[str, lis
     return (SHEET_TAKEAWAY if is_takeaway else SHEET_LOCAL), row
 
 
-def _write_summary_sheet(ws, summary: Dict, date_label: str):
+def _write_cash_rows(ws, cash: Dict, bold):
+    """Apertura, gastos, esperado y arqueo de la caja (models/cash.py)."""
+    ws.append([])
+    ws.append(["Caja", "Bs"])
+    for cell in ws[ws.max_row]:
+        cell.font = bold
+    rows = [
+        ("Apertura", cash["opening_time"] or "sin abrir"),
+        ("Cajero", cash["cashier"]),
+        ("Efectivo inicial", cash["cash_start"]),
+        ("Fondo para imprevistos", cash["reserve"]),
+        ("QR inicial", cash["qr_start"]),
+        ("Gastos en efectivo", cash["expenses_cash"]),
+        ("Gastos por QR", cash["expenses_qr"]),
+        ("Motos pagadas de la caja (efectivo)", cash["moto_cash_from_drawer"]),
+        ("Motos pagadas de la caja (QR)", cash["moto_qr_from_drawer"]),
+        ("Efectivo esperado", cash["expected_cash"]),
+        ("QR esperado", cash["expected_qr"]),
+    ]
+    if cash["counted_cash"] is not None:
+        rows += [
+            ("Efectivo contado (arqueo)", cash["counted_cash"]),
+            ("Diferencia (+ sobra / - falta)", cash["difference"]),
+        ]
+    for label, value in rows:
+        ws.append([label, value])
+    if cash["expenses"]:
+        ws.append([])
+        ws.append(["Gastos e imprevistos", "Monto (Bs)", "Medio", "Hora"])
+        for cell in ws[ws.max_row]:
+            cell.font = bold
+        for expense in cash["expenses"]:
+            ws.append([expense["reason"], expense["amount"], expense["method"], expense["time"]])
+
+
+def _write_summary_sheet(ws, summary: Dict, date_label: str, cash: Dict = None):
     from openpyxl.styles import Font
 
     bold = Font(bold=True)
@@ -289,6 +324,8 @@ def _write_summary_sheet(ws, summary: Dict, date_label: str):
     ]
     for label, value in rows:
         ws.append([label, value] if label else [])
+    if cash and (cash["opened"] or cash["expenses"] or cash["counted_cash"] is not None):
+        _write_cash_rows(ws, cash, bold)
     ws.append([])
     ws.append(["Por metodo de pago", "Pedidos", "Total (Bs)"])
     for cell in ws[ws.max_row]:
@@ -330,7 +367,7 @@ def _save_workbook(wb, path: str) -> Tuple[bool, str]:
         return False, f"No se pudo guardar el Excel: {e}"
 
 
-def write_daily_excel(root: str, date: datetime.date) -> Tuple[bool, str]:
+def write_daily_excel(root: str, date: datetime.date, cash: Dict = None) -> Tuple[bool, str]:
     from openpyxl import Workbook
 
     sales = read_sales(root, date)
@@ -349,7 +386,7 @@ def write_daily_excel(root: str, date: datetime.date) -> Tuple[bool, str]:
         sheets[sheet].append(row)
     _autosize(ws_local)
     _autosize(ws_takeaway)
-    _write_summary_sheet(wb.create_sheet(SHEET_SUMMARY), summarize(sales), _date_str(date))
+    _write_summary_sheet(wb.create_sheet(SHEET_SUMMARY), summarize(sales), _date_str(date), cash)
     return _save_workbook(wb, excel_path(root, date))
 
 

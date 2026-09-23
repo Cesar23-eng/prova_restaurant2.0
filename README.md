@@ -85,10 +85,52 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 | Cobrar | **Cobrar** o `F9`. `F1` efectivo, `F2` QR, `F3` mixto; montos rápidos y cambio en grande |
 | Comanda de cocina | **🔔 Comanda** o `F8`: imprime directo solo lo nuevo. ⋯ → reimprimir completa |
 | Cuenta del cliente | **🧾 Cuenta** o `Ctrl+P` |
-| Cierre de caja | **Resumen del día**: total, efectivo y QR netos, cambio, motos, productos |
+| Apertura de caja | **💰 Abrir caja**: efectivo inicial, saldo del QR y fondo para imprevistos |
+| Gasto o imprevisto | **💰 Caja abierta → Registrar gasto** (hielo, gas…), sale del efectivo o del QR |
+| Bebida agotada | **🥤 Inventario** o clic derecho sobre la variante en el menú |
+| Cierre de caja | **📊 Cierre**: efectivo y QR esperados, arqueo (sobra/falta), gastos, ventas, productos |
 
 Los avisos (agregado, cobrado, mesero envió algo) aparecen abajo sin interrumpir; solo
 se pide confirmación para acciones que no se pueden deshacer.
+
+### Apertura y cierre de caja
+
+Al empezar la jornada se toca **💰 Abrir caja** (el botón queda ámbar hasta abrirla; no
+es obligatorio y no bloquea la venta) y se anota:
+
+- **Efectivo inicial:** el sencillo para dar cambio.
+- **Saldo inicial del QR** (opcional).
+- **Fondo para imprevistos:** plata aparte para compras del día.
+
+Durante el día, cada compra que sale de la caja se registra en **💰 Caja abierta →
+Registrar gasto** con monto, motivo y si salió del efectivo o del QR. La apertura se
+puede corregir y un gasto cargado por error se anula desde el cierre.
+
+El **📊 Cierre** calcula:
+
+```
+Efectivo esperado = inicial + fondo + ventas en efectivo (neto de cambio)
+                    − gastos en efectivo − motos pagadas en efectivo
+QR esperado       = saldo inicial + ventas por QR − gastos por QR − motos por QR
+```
+
+El cajero cuenta los billetes, escribe el **efectivo contado** y el sistema muestra
+**CUADRA**, **SOBRAN Bs X** o **FALTAN Bs X**. El arqueo se imprime y queda en la hoja
+*Resumen* del Excel del día. Las motos se descuentan de la caja
+(`motos_salen_de_caja` en `config.json`).
+
+### Inventario de bebidas (agotado / disponible)
+
+Cuando se acaba una soda, se marca **AGOTADO** en **🥤 Inventario** (o con clic derecho
+sobre la variante en el menú de la caja). Desde ese momento:
+
+- En la caja aparece tachada con «AGOTADO» y no se puede agregar.
+- En los celulares aparece tachada y no se puede elegir. Si un mesero ya la tenía en el
+  carrito, al enviar la caja la rechaza y el celular marca la línea para quitarla.
+- Cuando llega, se vuelve a marcar **Disponible**. Queda registrado en la auditoría.
+
+Las categorías que muestra el inventario se configuran con `categorias_inventario`
+(por defecto `["Bebidas"]`).
 
 ### Platos (emplatado para cocina)
 
@@ -131,6 +173,8 @@ Configuración en **⋯ → Impresora de tickets**:
   Windows en las demás.
 - **Papel:** 80 mm (48 columnas) o 58 mm (32 columnas).
 - **Letra de la comanda:** *Normal* (recomendada) o *Grande*, para leer de lejos en cocina.
+- **Meseros pueden imprimir:** *Sí: comandas y cuentas*, *Solo comandas* o *No, solo la
+  caja imprime* (`meseros_imprimen`).
 - **Imprimir prueba:** revisa tildes, tamaños y corte.
 
 Requisito: instalar el driver de Epson (*EPSON Advanced Printer Driver* para TM-T20III).
@@ -144,6 +188,14 @@ Requisito: instalar el driver de Epson (*EPSON Advanced Printer Driver* para TM-
    un toque, busca platillos, elige el plato, agrega notas para cocina, ve lo ya
    pedido y envía con el botón inferior. El pedido no se pierde si se recarga la
    página y no se duplica si el WiFi falla al enviar.
+4. **Imprimir desde el celular** (botón aparte: enviar no imprime solo). En el menú de
+   la mesa, **🧾 Pedido** muestra lo pedido y la sección **IMPRIMIR**:
+   - **🔔 Comanda · N nuevos:** imprime en la Epson de la caja solo lo que cocina no
+     tiene. *↻ Reimprimir comanda completa* vuelve a sacar todo.
+   - **🧾 Cuenta:** la cuenta del cliente.
+   - Al enviar un pedido, el aviso de «¡Enviado!» ofrece **🖨 Imprimir comanda**.
+   La caja muestra un aviso cada vez que un mesero imprime y lo anota en la auditoría.
+   Si la impresora falla, el celular lo dice y los platillos siguen como pendientes.
 
 La primera vez Windows puede preguntar por el Firewall: permite el acceso en
 **redes privadas**. El PIN se genera solo y se puede cambiar desde la caja.
@@ -158,7 +210,9 @@ Todo se guarda en la carpeta `data/` junto al programa:
 | `AAAA-MM-DD/ventas_AAAA-MM-DD.jsonl` | Registro de cada cobro (fuente de verdad) |
 | `AAAA-MM-DD/pedidos_AAAA-MM-DD.xlsx` | Excel del dia: hojas *En el local*, *Para llevar* y *Resumen* |
 | `AAAA-MM-DD/audit_log_AAAA-MM-DD.txt` | Auditoria: quien agrego, quito, cobro o elimino |
-| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, productos que llevan plato |
+| `AAAA-MM-DD/caja_AAAA-MM-DD.json` | Apertura de caja, gastos e imprevistos y arqueo del día |
+| `inventario.json` | Productos marcados como agotados |
+| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, productos que llevan plato, permisos de impresión de meseros |
 | `errores.log` | Errores inesperados (la app no se cierra, avisa y registra) |
 
 - Si el Excel del dia esta abierto al cobrar, la venta igual queda registrada y la

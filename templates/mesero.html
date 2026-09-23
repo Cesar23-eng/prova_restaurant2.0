@@ -225,6 +225,18 @@
     .variante-btn.flash { background: var(--success); border-color: var(--success); color: #fff; }
     .precio-tag { font-family: var(--title-font); color: var(--wood-text); font-size: 1rem; }
     .variante-btn.flash .precio-tag { color: #fff; }
+    /* Agotado: se ve tachado y no entra al pedido */
+    .variante-btn.sold-out { border-style: dashed; background: transparent; color: var(--muted); }
+    .variante-btn.sold-out .variante-name { text-decoration: line-through; }
+    .sold-tag {
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; color: var(--danger);
+      background: var(--danger-soft); border-radius: 999px; padding: 2px 8px;
+    }
+    .line.sold-out .line-name { color: var(--danger); }
+    .remove-btn {
+      min-height: 38px; padding: 6px 12px; border-radius: 10px; border: 1.5px solid var(--danger);
+      background: var(--danger-soft); color: var(--danger); font-weight: 800; font-size: 0.85rem;
+    }
     .count-badge {
       position: absolute; top: -8px; right: -6px; min-width: 22px; height: 22px; padding: 0 6px;
       background: var(--primary); color: #fff; border-radius: 999px; font-size: 0.75rem; font-weight: 800;
@@ -271,6 +283,17 @@
     details.card summary .card-head { margin-bottom: 0; }
     details.card[open] summary .card-head { margin-bottom: 6px; }
     .chevron { color: var(--muted); transition: transform 0.2s; display: inline-block; }
+    .mesa-bar .pill-btn { margin-left: auto; }
+    .pill-btn {
+      min-height: 42px; padding: 8px 14px; border-radius: 12px; white-space: nowrap;
+      background: var(--surface2); border: 1px solid var(--border); font-weight: 700; font-size: 0.9rem;
+    }
+    /* Impresion desde el celular: botones aparte, enviar no imprime */
+    .print-card .card-head { margin-bottom: 10px; }
+    .print-actions { display: grid; gap: 8px; }
+    .print-actions .btn { min-height: 56px; }
+    .print-card .link-btn { display: block; margin: 8px auto 0; }
+    .print-warn { color: var(--warning); font-size: 0.85rem; font-weight: 600; margin-bottom: 10px; }
     details[open] .chevron { transform: rotate(180deg); }
 
     /* ---------- Barra inferior ---------- */
@@ -307,6 +330,7 @@
       font-size: 3rem; margin: 0 auto 16px; animation: pop 0.35s ease-out;
     }
     .done-overlay h2 { font-family: var(--title-font); font-size: 2rem; font-stretch: condensed; }
+    .done-actions { display: grid; gap: 8px; margin: 22px auto 0; width: min(300px, 80vw); }
     @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
   </style>
 </head>
@@ -359,6 +383,7 @@
       <div class="mesa-bar">
         <button class="icon-btn" type="button" data-go="screen-mesa" aria-label="Cambiar de mesa">←</button>
         <span class="title" id="menu-mesa"></span>
+        <button class="pill-btn" type="button" id="btn-ver-mesa">🧾 Pedido</button>
       </div>
       <input id="search" type="search" placeholder="🔍  Buscar: taco, horchata, birria…" autocomplete="off" />
       <div class="chips" id="cat-tabs"></div>
@@ -377,6 +402,15 @@
     <div class="card">
       <div class="card-head"><h3>NUEVO PARA ENVIAR</h3><span class="muted" id="cart-count"></span></div>
       <div id="carrito-body"></div>
+    </div>
+    <div class="card print-card" id="print-card" hidden>
+      <div class="card-head"><h3>IMPRIMIR</h3><span class="muted" id="print-hint"></span></div>
+      <p class="print-warn" id="print-warn" hidden></p>
+      <div class="print-actions">
+        <button class="btn btn-primary btn-big" id="btn-print-comanda" type="button">🔔 Comanda</button>
+        <button class="btn btn-ghost btn-big" id="btn-print-cuenta" type="button">🧾 Cuenta</button>
+      </div>
+      <button class="link-btn" id="btn-reprint" type="button">↻ Reimprimir comanda completa</button>
     </div>
     <details class="card" id="current-order-card" hidden>
       <summary>
@@ -434,6 +468,10 @@
     <div class="done-check">✓</div>
     <h2>¡ENVIADO A LA CAJA!</h2>
     <p class="muted" id="done-detail"></p>
+    <div class="done-actions" id="done-actions" hidden>
+      <button class="btn btn-primary btn-big" id="done-print" type="button">🖨 Imprimir comanda</button>
+      <button class="btn btn-ghost" id="done-ok" type="button">Listo</button>
+    </div>
   </div>
 </div>
 
@@ -454,7 +492,9 @@
     categoria: null,
     plato: 1,          // plato al que van los platillos que se tocan (0 = sin plato)
     platosMesa: [],    // platos que la mesa ya tiene en la caja
-    ajustes: { productos_con_plato: ['Taco', 'Taco con queso'], max_platos: 30, iconos: { categorias: {}, productos: {} }, numero_mesas: 13 },
+    ajustes: { productos_con_plato: ['Taco', 'Taco con queso'], max_platos: 30, iconos: { categorias: {}, productos: {} }, numero_mesas: 13, meseros_imprimen: 'no' },
+    agotados: new Set(), // "categoria|platillo|variante" que se acabaron en la caja
+    printJob: null,      // {key, id}: el reintento sin conexion no imprime dos veces
     newMesaTipo: 'En el local',
     screen: 'screen-mesa',
   };
@@ -505,15 +545,16 @@
 
   // ============ API ============
   class ApiError extends Error {
-    constructor(message, status) { super(message); this.status = status; }
+    constructor(message, status, data = {}) { super(message); this.status = status; this.data = data; }
   }
 
   async function api(path, options = {}) {
+    const { timeout, ...fetchOptions } = options;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeout || REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(path, {
-        ...options,
+        ...fetchOptions,
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-PIN': state.pin, ...(options.headers || {}) },
       });
@@ -525,7 +566,7 @@
         show('screen-pin');
         throw new ApiError(data.error || 'PIN incorrecto', 401);
       }
-      if (!res.ok || data.ok === false) throw new ApiError(data.error || 'Error ' + res.status, res.status);
+      if (!res.ok || data.ok === false) throw new ApiError(data.error || 'Error ' + res.status, res.status, data);
       return data;
     } catch (e) {
       if (!(e instanceof ApiError)) {
@@ -555,8 +596,8 @@
     $('bar-carrito').hidden = screen !== 'screen-carrito';
     updateCartBar();
     if (screen === 'screen-mesa') loadMesas();
-    if (screen === 'screen-menu') { $('menu-mesa').textContent = state.mesa; renderMenu(); loadPlatosMesa(); }
-    if (screen === 'screen-carrito') { renderCart(); loadCurrentOrder(); }
+    if (screen === 'screen-menu') { $('menu-mesa').textContent = state.mesa; renderMenu(); loadPlatosMesa(); loadAgotados(); }
+    if (screen === 'screen-carrito') { renderCart(); refreshCarrito(); }
     window.scrollTo(0, 0);
   }
 
@@ -690,7 +731,10 @@
     try {
       const [menu, ajustes] = await Promise.all([api('/api/menu'), api('/api/ajustes').catch(() => null)]);
       state.menu = menu;
-      if (ajustes) state.ajustes = { ...state.ajustes, ...ajustes };
+      if (ajustes) {
+        state.ajustes = { ...state.ajustes, ...ajustes };
+        setAgotados(ajustes.agotados);
+      }
     } catch (e) {
       if (e.status !== 401) toast('No se pudo cargar el menú: ' + e.message, 'error');
     }
@@ -792,6 +836,12 @@
               h('div', { class: 'platillo-name' }, platillo),
               tokens.length ? h('span', { class: 'platillo-cat' }, categoria) : null)),
           h('div', { class: 'variante-list' }, entries.map(([variante, precio]) => {
+            if (esAgotado(categoria, platillo, variante)) {
+              return h('button', {
+                type: 'button', class: 'variante-btn sold-out', 'aria-disabled': 'true',
+                onclick: () => avisarAgotado(platillo, variante),
+              }, h('span', { class: 'variante-name' }, variante), h('span', { class: 'sold-tag' }, 'AGOTADO'));
+            }
             const count = unitsFor(categoria, platillo, variante);
             return h('button', {
               type: 'button', class: 'variante-btn',
@@ -831,6 +881,7 @@
     && a.variante === b.variante && (a.nota || '') === (b.nota || '') && (a.plato || 0) === (b.plato || 0);
 
   function addToCart(categoria, platillo, variante, precio, btn) {
+    if (esAgotado(categoria, platillo, variante)) return avisarAgotado(platillo, variante);
     const nueva = { categoria, platillo, variante, precio, nota: '', cantidad: 1, plato: platoDe(platillo) };
     const line = state.cart.find((l) => sameLine(l, nueva));
     if (line) line.cantidad += 1;
@@ -856,6 +907,7 @@
     $('cart-count').textContent = units ? `${units} ${units === 1 ? 'ítem' : 'ítems'}` : '';
     $('btn-enviar').disabled = !units;
     updateCartBar();
+    updatePrintWarn();
     if (!units) {
       body.replaceChildren(h('p', { class: 'muted center', style: 'padding: 20px 0' },
         '🛒 Todavía no agregaste platillos.'));
@@ -905,7 +957,11 @@
           type: 'button', class: 'note-btn',
           onclick: () => { line._nota = true; renderCart(); },
         }, '📝 Nota');
-    return h('div', { class: 'line' },
+    const agotada = esAgotado(line.categoria, line.platillo, line.variante);
+    const quitar = agotada
+      ? h('button', { type: 'button', class: 'remove-btn', onclick: () => removeLine(idx) }, '✖ Se acabó · quitar')
+      : null;
+    return h('div', { class: 'line' + (agotada ? ' sold-out' : '') },
       h('div', { class: 'line-top' },
         h('div', { class: 'qty' },
           h('button', { type: 'button', 'aria-label': 'Quitar uno', onclick: () => changeQty(idx, -1) }, '−'),
@@ -915,8 +971,15 @@
         h('div', { class: 'line-name' }, line.platillo, h('small', {}, line.variante)),
         h('div', { class: 'line-price' }, money(line.precio * line.cantidad)),
       ),
-      h('div', { class: 'line-bottom' }, plateSelect, splitButton, nota),
+      h('div', { class: 'line-bottom' }, quitar, plateSelect, splitButton, nota),
     );
+  }
+
+  function removeLine(idx) {
+    state.cart.splice(idx, 1);
+    vibrate(10);
+    cartChanged();
+    renderCart();
   }
 
   // Separa una unidad a otro plato: 3 tacos con queso -> 2 en su plato y 1 en el siguiente
@@ -965,6 +1028,7 @@
       const pedido = await api('/api/pedido/' + encodeURIComponent(state.mesa));
       state.platosMesa = platosDeItems(pedido.items);
       renderCart();
+      renderPrintCard(pedido);
       if (!pedido.items.length) { card.hidden = true; return; }
       $('current-order-total').textContent = money(pedido.total);
       const conPlatos = pedido.items.some((i) => i.plato);
@@ -987,6 +1051,7 @@
       if (pedido.pagado) toast('Esta mesa ya fue cobrada. Elige otra.', 'error');
     } catch (e) {
       card.hidden = true;
+      $('print-card').hidden = true;
       if (e.status === 404) {
         toast('La mesa ya no existe en la caja', 'error');
         state.mesa = null;
@@ -1014,14 +1079,18 @@
         body: JSON.stringify({ request_id: state.requestId, items }),
       });
       vibrate([20, 40, 20]);
+      const mesaEnviada = state.mesa;
       $('done-detail').textContent = data.mensaje;
-      $('done-overlay').hidden = false;
       state.cart = [];
       state.requestId = null;
       state.mesa = null;
       save();
-      setTimeout(() => { $('done-overlay').hidden = true; show('screen-mesa'); }, 1500);
+      showDone(mesaEnviada);
     } catch (e) {
+      if (e.status === 409 && Array.isArray(e.data.agotados)) {
+        e.data.agotados.forEach((a) => state.agotados.add(claveProducto(a.categoria, a.platillo, a.variante)));
+        renderCart();
+      }
       toast('⚠️ ' + e.message + (e.status === 0 ? '. Toca enviar de nuevo.' : ''), 'error');
       vibrate([40, 60, 40]);
     } finally {
@@ -1033,6 +1102,126 @@
   document.querySelectorAll('[data-go]').forEach((btn) =>
     btn.addEventListener('click', () => show(btn.dataset.go)));
   $('btn-ver-pedido').addEventListener('click', () => show('screen-carrito'));
+  $('btn-ver-mesa').addEventListener('click', () => show('screen-carrito'));
+
+  // ============ AGOTADOS ============
+  const claveProducto = (c, p, v) => [c, p, v].map((s) => normalize(s).trim()).join('|');
+  const esAgotado = (c, p, v) => state.agotados.has(claveProducto(c, p, v));
+
+  function avisarAgotado(platillo, variante) {
+    vibrate([40, 60, 40]);
+    toast(`Se acabó ${platillo} (${variante}). Ofrece otra opción.`, 'error');
+  }
+
+  function setAgotados(lista) {
+    const nuevos = new Set((lista || []).map((a) => claveProducto(a.categoria, a.platillo, a.variante)));
+    const cambio = nuevos.size !== state.agotados.size || [...nuevos].some((k) => !state.agotados.has(k));
+    state.agotados = nuevos;
+    if (!cambio) return;
+    if (state.screen === 'screen-menu') renderPlatillos();
+    if (state.screen === 'screen-carrito') renderCart();
+  }
+
+  async function loadAgotados() {
+    try {
+      setAgotados((await api('/api/agotados')).agotados);
+    } catch (e) { /* se vuelve a intentar en el siguiente ciclo */ }
+  }
+
+  // Al abrir el pedido se releen los ajustes: la caja pudo cambiar el permiso de imprimir
+  async function refreshCarrito() {
+    try {
+      const ajustes = await api('/api/ajustes');
+      state.ajustes = { ...state.ajustes, ...ajustes };
+      setAgotados(ajustes.agotados);
+    } catch (e) { /* se usan los ajustes que ya se tenian */ }
+    loadCurrentOrder();
+  }
+
+  // ============ IMPRIMIR DESDE EL CELULAR ============
+  const modoImpresion = () => state.ajustes.meseros_imprimen || 'no';
+
+  function renderPrintCard(pedido) {
+    const card = $('print-card');
+    if (modoImpresion() === 'no' || !pedido.items.length || pedido.pagado) { card.hidden = true; return; }
+    const nuevos = pedido.sin_comanda || 0;
+    const comanda = $('btn-print-comanda');
+    comanda.textContent = nuevos ? `🔔 Comanda · ${nuevos} nuevo${nuevos === 1 ? '' : 's'}` : '✔ Comanda impresa';
+    comanda.disabled = !nuevos;
+    $('print-hint').textContent = nuevos ? 'Cocina aún no tiene lo nuevo' : 'Cocina ya tiene todo';
+    const cuenta = $('btn-print-cuenta');
+    cuenta.hidden = modoImpresion() !== 'comanda_y_cuenta';
+    cuenta.textContent = `🧾 Cuenta · ${money(pedido.total)}`;
+    updatePrintWarn();
+    card.hidden = false;
+  }
+
+  function updatePrintWarn() {
+    const sinEnviar = cartUnits();
+    $('print-warn').hidden = !sinEnviar;
+    $('print-warn').textContent = sinEnviar
+      ? `Tienes ${sinEnviar} platillo(s) sin enviar: envíalos primero para que salgan impresos.` : '';
+  }
+
+  async function printTicket(mesa, tipo, todo = false, btn = null) {
+    const key = `${mesa}|${tipo}|${todo ? 1 : 0}`;
+    // Mismo id si se reintenta sin conexion: la caja no imprime dos veces
+    if (!state.printJob || state.printJob.key !== key) {
+      state.printJob = { key, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 10) };
+    }
+    const texto = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Imprimiendo…'; }
+    try {
+      const data = await api('/api/pedido/' + encodeURIComponent(mesa) + '/imprimir', {
+        method: 'POST', timeout: 25000,
+        body: JSON.stringify({ tipo, todo, request_id: state.printJob.id }),
+      });
+      state.printJob = null;
+      vibrate([20, 40, 20]);
+      toast('🖨 ' + (data.mensaje || 'Impreso'), 'success');
+      return true;
+    } catch (e) {
+      if (e.status !== 0) state.printJob = null;
+      toast('⚠️ ' + e.message + (e.status === 0 ? '. Toca de nuevo.' : ''), 'error');
+      vibrate([40, 60, 40]);
+      return false;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = texto; }
+      if (state.screen === 'screen-carrito' && state.mesa === mesa) loadCurrentOrder();
+    }
+  }
+
+  $('btn-print-comanda').addEventListener('click', (e) => printTicket(state.mesa, 'comanda', false, e.currentTarget));
+  $('btn-print-cuenta').addEventListener('click', (e) => printTicket(state.mesa, 'cuenta', false, e.currentTarget));
+  $('btn-reprint').addEventListener('click', (e) => {
+    if (!confirm(`¿Reimprimir la comanda COMPLETA de ${state.mesa}? Cocina recibirá todo el pedido de nuevo.`)) return;
+    printTicket(state.mesa, 'comanda', true, e.currentTarget);
+  });
+
+  // Aviso de enviado: imprimir es un boton aparte, enviar no imprime solo
+  let doneTimer = null;
+  function closeDone() {
+    clearTimeout(doneTimer);
+    $('done-overlay').hidden = true;
+    show('screen-mesa');
+  }
+
+  function showDone(mesa) {
+    const puedeImprimir = modoImpresion() !== 'no';
+    $('done-actions').hidden = !puedeImprimir;
+    $('done-print').disabled = false;
+    $('done-print').textContent = '🖨 Imprimir comanda';
+    $('done-print').onclick = async (e) => {
+      clearTimeout(doneTimer);
+      const ok = await printTicket(mesa, 'comanda', false, e.currentTarget);
+      if (ok) closeDone();
+      else doneTimer = setTimeout(closeDone, 6000);
+    };
+    $('done-overlay').hidden = false;
+    clearTimeout(doneTimer);
+    doneTimer = setTimeout(closeDone, puedeImprimir ? 6000 : 1500);
+  }
+  $('done-ok').addEventListener('click', closeDone);
 
   // ============ TOAST ============
   let toastTimer = null;
@@ -1049,12 +1238,13 @@
     document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
   new ResizeObserver(syncHeaderHeight).observe(document.querySelector('header'));
   load();
-  setInterval(() => {
-    if (state.screen === 'screen-mesa' && !document.hidden) loadMesas();
-  }, REFRESH_MS);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.screen === 'screen-mesa') loadMesas();
-  });
+  function refrescar() {
+    if (document.hidden || !state.pin) return;
+    if (state.screen === 'screen-mesa') loadMesas();
+    else if (state.screen === 'screen-menu' || state.screen === 'screen-carrito') loadAgotados();
+  }
+  setInterval(refrescar, REFRESH_MS);
+  document.addEventListener('visibilitychange', refrescar);
 
   (async () => {
     if (!state.pin) return show('screen-pin');

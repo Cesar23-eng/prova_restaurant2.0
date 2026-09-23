@@ -267,8 +267,8 @@ def test_theme_toggle_and_summary_dialog(window, manager, data_dir):
     with open(os.path.join(data_dir, "config.json"), encoding="utf-8") as f:
         assert json.load(f)["tema_visual"] == "dia"
     dialog = DaySummaryDialog(manager, "PRÖVA Test", window, colors=window.theme_manager.get_current_theme())
-    assert dialog.kpi_labels["cash_net"].text() == "Bs 30.00"
-    assert "Efectivo neto en caja" in dialog.browser.toPlainText()
+    assert dialog.kpi_labels["expected_cash"].text() == "Bs 30.00"
+    assert "Efectivo neto de ventas" in dialog.browser.toPlainText()
     dialog.close()
 
 
@@ -451,3 +451,183 @@ def test_split_one_taco_con_queso_to_another_plate(window, manager):
         "\U0001F37D  PLATO 2", "1x Taco con queso Carne",
     ]
     assert "separado" in window.toast.last_message
+
+
+# ---------------------------------------------------------------------------
+#  Caja: apertura, gastos y arqueo
+# ---------------------------------------------------------------------------
+def fake_dialog(monkeypatch, name, values):
+    class FakeDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def values(self):
+            return values
+
+    monkeypatch.setattr(f"views.main_window.{name}", FakeDialog)
+
+
+def test_cash_opening_expense_and_count(window, manager, monkeypatch):
+    from views.dialogs import DaySummaryDialog
+
+    assert "Abrir caja" in window.cash_btn.text() and window.cash_btn.property("status") == "warn"
+    fake_dialog(monkeypatch, "CashOpeningDialog", {"cash": 200, "qr": 0, "reserve": 50, "cashier": "Ana"})
+    window.on_cash_button()
+    assert "Caja abierta" in window.cash_btn.text() and window.cash_btn.property("status") == "ok"
+
+    fake_dialog(monkeypatch, "ExpenseDialog", {"amount": 20, "method": "Efectivo", "reason": "Hielo"})
+    assert window.register_expense()
+    assert "Hielo" in window.toast.last_message
+
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15, qty=2)
+    manager.register_payment("Mesa 1", "Efectivo", cash_amount=50, change_method="Efectivo")
+    dialog = DaySummaryDialog(manager, "PRÖVA Test", window)
+    # 200 inicial + 50 imprevistos + 30 ventas - 20 hielo
+    assert dialog.kpi_labels["expected_cash"].text() == "Bs 260.00"
+    dialog.count_input.setText("255")
+    dialog.save_count()
+    assert dialog.difference_label.text() == "FALTAN  Bs 5.00"
+    assert dialog.difference_label.property("state") == "missing"
+    assert "Hielo" in dialog.browser.toPlainText()
+    dialog.close()
+
+
+def test_cash_opening_is_only_a_reminder(window, manager):
+    window._remind_cash_opening()
+    assert window.toast.last_kind == "warning" and "Caja sin abrir" in window.toast.last_message
+    manager.cash.open(100)
+    window.toast.last_message = ""
+    window._remind_cash_opening()
+    assert window.toast.last_message == ""
+
+
+def test_day_summary_prints_cash_block(window, manager, monkeypatch):
+    from utils import tickets
+
+    printed = []
+    monkeypatch.setattr(window, "send_ticket", lambda ticket, title: printed.append(tickets.to_text(ticket)) or True)
+    manager.cash.open(150, reserve=50)
+    manager.cash.add_expense(30, "Efectivo", "Gas")
+    summary = manager.day_summary()
+    window.print_day_summary(summary, "01/01/2026", manager.cash_summary(None, summary))
+    assert "ARQUEO DE CAJA" in printed[0] and "Gas" in printed[0]
+
+
+# ---------------------------------------------------------------------------
+#  Inventario: agotados
+# ---------------------------------------------------------------------------
+def test_sold_out_soda_cannot_be_added_from_caja(window, manager):
+    manager.create_table("Mesa 1")
+    window.select_order("Mesa 1")
+    window.set_category("Bebidas")
+    manager.inventory.set_available("Bebidas", "Coca cola", "Botella", False)
+    button = window.variant_buttons[("Bebidas", "Coca cola", "Botella")]
+    assert "AGOTADO" in button.text() and button.property("soldOut") is True
+    assert "1 agotado" in window.inventory_btn.text()
+
+    assert window.add_product("Bebidas", "Coca cola", "Botella") is False
+    assert window.toast.last_kind == "error" and "Se acabó" in window.toast.last_message
+    assert manager.get_items("Mesa 1") == []
+
+    manager.inventory.set_available("Bebidas", "Coca cola", "Botella", True)
+    assert window.variant_buttons[("Bebidas", "Coca cola", "Botella")].property("soldOut") is False
+    assert "Inventario" in window.inventory_btn.text()
+    assert window.add_product("Bebidas", "Coca cola", "Botella") is True
+
+
+def test_inventory_dialog_toggles(window, manager):
+    from views.dialogs import InventoryDialog
+
+    dialog = InventoryDialog(manager, window.menu_data.get_menu_prices(), ["Bebidas"], window)
+    key = ("Bebidas", "Coca cola", "Botella")
+    assert key in dialog.toggles and ("Platillos", "Taco", "Carne") not in dialog.toggles
+    dialog.toggles[key].click()
+    assert not manager.inventory.is_available(*key)
+    assert dialog.toggles[key].text() == "✖ AGOTADO" and dialog.status_label.text().startswith("1 producto")
+    dialog.filter_input.setText("zzz")
+    assert all(item.isHidden() for _key, item in dialog.rows)
+    dialog.mark_all_available()
+    assert manager.inventory.is_available(*key) and dialog.status_label.text() == "Todo disponible"
+    dialog.close()
+
+
+# ---------------------------------------------------------------------------
+#  Impresion pedida por el mesero
+# ---------------------------------------------------------------------------
+def test_waiter_prints_kitchen_ticket_and_bill(window, manager, monkeypatch):
+    from utils import tickets
+
+    sent = []
+    monkeypatch.setattr(window.ticket_printer, "print_ticket",
+                        lambda ticket, job: sent.append((job, tickets.to_text(ticket))) or "EPSON TM-T20III Receipt")
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
+
+    payload, status = window.print_for_waiter("comanda", "Mesa 1")
+    assert status == 200 and payload["ok"] and "mesero" in sent[-1][0]
+    assert manager.kitchen_pending_count("Mesa 1") == 0
+    assert "Mesero imprimió la comanda" in window.toast.last_message
+
+    payload, status = window.print_for_waiter("comanda", "Mesa 1")
+    assert status == 409 and payload["sin_nuevos"] and len(sent) == 1
+
+    payload, status = window.print_for_waiter("comanda", "Mesa 1", full=True)
+    assert status == 200 and len(sent) == 2 and "Pastor" in sent[-1][1]
+
+    payload, status = window.print_for_waiter("cuenta", "Mesa 1")
+    assert status == 200 and "Cuenta" in payload["mensaje"] and "30" in sent[-1][1]
+    assert window.print_for_waiter("cuenta", "Mesa 9")[1] == 404
+
+
+def test_waiter_print_error_keeps_items_pending(window, manager, monkeypatch):
+    from utils.printer import PrinterError
+
+    def fail(ticket, job):
+        raise PrinterError("Impresora sin papel")
+
+    monkeypatch.setattr(window.ticket_printer, "print_ticket", fail)
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
+    payload, status = window.print_for_waiter("comanda", "Mesa 1")
+    assert status == 502 and not payload["ok"]
+    assert manager.kitchen_pending_count("Mesa 1") == 2
+    assert window.toast.last_kind == "error"
+
+
+def test_waiter_print_from_server_thread_runs_on_caja_thread(window, manager, monkeypatch, qapp):
+    """El servidor pide imprimir desde su hilo; la impresion corre en el hilo de Qt."""
+    printed_in = []
+    monkeypatch.setattr(window.ticket_printer, "print_ticket",
+                        lambda ticket, job: printed_in.append(threading.current_thread()) or "EPSON")
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15)
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(r=window.print_for_waiter("comanda", "Mesa 1")))
+    worker.start()
+    while worker.is_alive():
+        qapp.processEvents()
+        worker.join(0.01)
+    assert result["r"][1] == 200
+    assert printed_in == [threading.main_thread()]
+
+
+def test_waiter_print_mode_from_config(window):
+    assert window.waiter_print_mode() == "comanda_y_cuenta"
+    window.config["meseros_imprimen"] = "solo_comanda"
+    assert window.waiter_print_mode() == "solo_comanda"
+    window.config["meseros_imprimen"] = "cualquier cosa"
+    assert window.waiter_print_mode() == "comanda_y_cuenta"
+
+
+def test_new_business_day_asks_to_open_cash_again(window, manager, frozen_now):
+    import datetime
+
+    manager.cash.open(200)
+    assert "Caja abierta" in window.cash_btn.text()
+    frozen_now(datetime.datetime(2026, 9, 15, 4, 30))  # paso la hora de corte: otra jornada
+    window._tick()
+    assert "Abrir caja" in window.cash_btn.text()
