@@ -288,12 +288,6 @@
       min-height: 42px; padding: 8px 14px; border-radius: 12px; white-space: nowrap;
       background: var(--surface2); border: 1px solid var(--border); font-weight: 700; font-size: 0.9rem;
     }
-    /* Impresion desde el celular: botones aparte, enviar no imprime */
-    .print-card .card-head { margin-bottom: 10px; }
-    .print-actions { display: grid; gap: 8px; }
-    .print-actions .btn { min-height: 56px; }
-    .print-card .link-btn { display: block; margin: 8px auto 0; }
-    .print-warn { color: var(--warning); font-size: 0.85rem; font-weight: 600; margin-bottom: 10px; }
     details[open] .chevron { transform: rotate(180deg); }
 
     /* ---------- Barra inferior ---------- */
@@ -330,7 +324,6 @@
       font-size: 3rem; margin: 0 auto 16px; animation: pop 0.35s ease-out;
     }
     .done-overlay h2 { font-family: var(--title-font); font-size: 2rem; font-stretch: condensed; }
-    .done-actions { display: grid; gap: 8px; margin: 22px auto 0; width: min(300px, 80vw); }
     @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
   </style>
 </head>
@@ -403,15 +396,6 @@
       <div class="card-head"><h3>NUEVO PARA ENVIAR</h3><span class="muted" id="cart-count"></span></div>
       <div id="carrito-body"></div>
     </div>
-    <div class="card print-card" id="print-card" hidden>
-      <div class="card-head"><h3>IMPRIMIR</h3><span class="muted" id="print-hint"></span></div>
-      <p class="print-warn" id="print-warn" hidden></p>
-      <div class="print-actions">
-        <button class="btn btn-primary btn-big" id="btn-print-comanda" type="button">🔔 Comanda</button>
-        <button class="btn btn-ghost btn-big" id="btn-print-cuenta" type="button">🧾 Cuenta</button>
-      </div>
-      <button class="link-btn" id="btn-reprint" type="button">↻ Reimprimir comanda completa</button>
-    </div>
     <details class="card" id="current-order-card" hidden>
       <summary>
         <div class="card-head">
@@ -468,10 +452,6 @@
     <div class="done-check">✓</div>
     <h2>¡ENVIADO A LA CAJA!</h2>
     <p class="muted" id="done-detail"></p>
-    <div class="done-actions" id="done-actions" hidden>
-      <button class="btn btn-primary btn-big" id="done-print" type="button">🖨 Imprimir comanda</button>
-      <button class="btn btn-ghost" id="done-ok" type="button">Listo</button>
-    </div>
   </div>
 </div>
 
@@ -492,9 +472,8 @@
     categoria: null,
     plato: 1,          // plato al que van los platillos que se tocan (0 = sin plato)
     platosMesa: [],    // platos que la mesa ya tiene en la caja
-    ajustes: { productos_con_plato: ['Taco', 'Taco con queso'], max_platos: 30, iconos: { categorias: {}, productos: {} }, numero_mesas: 13, meseros_imprimen: 'no' },
+    ajustes: { productos_con_plato: ['Taco', 'Taco con queso'], max_platos: 30, iconos: { categorias: {}, productos: {} }, numero_mesas: 13 },
     agotados: new Set(), // "categoria|platillo|variante" que se acabaron en la caja
-    printJob: null,      // {key, id}: el reintento sin conexion no imprime dos veces
     newMesaTipo: 'En el local',
     screen: 'screen-mesa',
   };
@@ -597,7 +576,7 @@
     updateCartBar();
     if (screen === 'screen-mesa') loadMesas();
     if (screen === 'screen-menu') { $('menu-mesa').textContent = state.mesa; renderMenu(); loadPlatosMesa(); loadAgotados(); }
-    if (screen === 'screen-carrito') { renderCart(); refreshCarrito(); }
+    if (screen === 'screen-carrito') { renderCart(); loadCurrentOrder(); loadAgotados(); }
     window.scrollTo(0, 0);
   }
 
@@ -907,7 +886,6 @@
     $('cart-count').textContent = units ? `${units} ${units === 1 ? 'ítem' : 'ítems'}` : '';
     $('btn-enviar').disabled = !units;
     updateCartBar();
-    updatePrintWarn();
     if (!units) {
       body.replaceChildren(h('p', { class: 'muted center', style: 'padding: 20px 0' },
         '🛒 Todavía no agregaste platillos.'));
@@ -1028,8 +1006,9 @@
       const pedido = await api('/api/pedido/' + encodeURIComponent(state.mesa));
       state.platosMesa = platosDeItems(pedido.items);
       renderCart();
-      renderPrintCard(pedido);
       if (!pedido.items.length) { card.hidden = true; return; }
+      // Sin nada nuevo para enviar, lo que ya pidio la mesa se muestra abierto
+      card.open = !cartUnits();
       $('current-order-total').textContent = money(pedido.total);
       const conPlatos = pedido.items.some((i) => i.plato);
       const rows = [];
@@ -1051,7 +1030,6 @@
       if (pedido.pagado) toast('Esta mesa ya fue cobrada. Elige otra.', 'error');
     } catch (e) {
       card.hidden = true;
-      $('print-card').hidden = true;
       if (e.status === 404) {
         toast('La mesa ya no existe en la caja', 'error');
         state.mesa = null;
@@ -1079,13 +1057,13 @@
         body: JSON.stringify({ request_id: state.requestId, items }),
       });
       vibrate([20, 40, 20]);
-      const mesaEnviada = state.mesa;
       $('done-detail').textContent = data.mensaje;
+      $('done-overlay').hidden = false;
       state.cart = [];
       state.requestId = null;
       state.mesa = null;
       save();
-      showDone(mesaEnviada);
+      setTimeout(() => { $('done-overlay').hidden = true; show('screen-mesa'); }, 1500);
     } catch (e) {
       if (e.status === 409 && Array.isArray(e.data.agotados)) {
         e.data.agotados.forEach((a) => state.agotados.add(claveProducto(a.categoria, a.platillo, a.variante)));
@@ -1128,100 +1106,6 @@
     } catch (e) { /* se vuelve a intentar en el siguiente ciclo */ }
   }
 
-  // Al abrir el pedido se releen los ajustes: la caja pudo cambiar el permiso de imprimir
-  async function refreshCarrito() {
-    try {
-      const ajustes = await api('/api/ajustes');
-      state.ajustes = { ...state.ajustes, ...ajustes };
-      setAgotados(ajustes.agotados);
-    } catch (e) { /* se usan los ajustes que ya se tenian */ }
-    loadCurrentOrder();
-  }
-
-  // ============ IMPRIMIR DESDE EL CELULAR ============
-  const modoImpresion = () => state.ajustes.meseros_imprimen || 'no';
-
-  function renderPrintCard(pedido) {
-    const card = $('print-card');
-    if (modoImpresion() === 'no' || !pedido.items.length || pedido.pagado) { card.hidden = true; return; }
-    const nuevos = pedido.sin_comanda || 0;
-    const comanda = $('btn-print-comanda');
-    comanda.textContent = nuevos ? `🔔 Comanda · ${nuevos} nuevo${nuevos === 1 ? '' : 's'}` : '✔ Comanda impresa';
-    comanda.disabled = !nuevos;
-    $('print-hint').textContent = nuevos ? 'Cocina aún no tiene lo nuevo' : 'Cocina ya tiene todo';
-    const cuenta = $('btn-print-cuenta');
-    cuenta.hidden = modoImpresion() !== 'comanda_y_cuenta';
-    cuenta.textContent = `🧾 Cuenta · ${money(pedido.total)}`;
-    updatePrintWarn();
-    card.hidden = false;
-  }
-
-  function updatePrintWarn() {
-    const sinEnviar = cartUnits();
-    $('print-warn').hidden = !sinEnviar;
-    $('print-warn').textContent = sinEnviar
-      ? `Tienes ${sinEnviar} platillo(s) sin enviar: envíalos primero para que salgan impresos.` : '';
-  }
-
-  async function printTicket(mesa, tipo, todo = false, btn = null) {
-    const key = `${mesa}|${tipo}|${todo ? 1 : 0}`;
-    // Mismo id si se reintenta sin conexion: la caja no imprime dos veces
-    if (!state.printJob || state.printJob.key !== key) {
-      state.printJob = { key, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 10) };
-    }
-    const texto = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Imprimiendo…'; }
-    try {
-      const data = await api('/api/pedido/' + encodeURIComponent(mesa) + '/imprimir', {
-        method: 'POST', timeout: 25000,
-        body: JSON.stringify({ tipo, todo, request_id: state.printJob.id }),
-      });
-      state.printJob = null;
-      vibrate([20, 40, 20]);
-      toast('🖨 ' + (data.mensaje || 'Impreso'), 'success');
-      return true;
-    } catch (e) {
-      if (e.status !== 0) state.printJob = null;
-      toast('⚠️ ' + e.message + (e.status === 0 ? '. Toca de nuevo.' : ''), 'error');
-      vibrate([40, 60, 40]);
-      return false;
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = texto; }
-      if (state.screen === 'screen-carrito' && state.mesa === mesa) loadCurrentOrder();
-    }
-  }
-
-  $('btn-print-comanda').addEventListener('click', (e) => printTicket(state.mesa, 'comanda', false, e.currentTarget));
-  $('btn-print-cuenta').addEventListener('click', (e) => printTicket(state.mesa, 'cuenta', false, e.currentTarget));
-  $('btn-reprint').addEventListener('click', (e) => {
-    if (!confirm(`¿Reimprimir la comanda COMPLETA de ${state.mesa}? Cocina recibirá todo el pedido de nuevo.`)) return;
-    printTicket(state.mesa, 'comanda', true, e.currentTarget);
-  });
-
-  // Aviso de enviado: imprimir es un boton aparte, enviar no imprime solo
-  let doneTimer = null;
-  function closeDone() {
-    clearTimeout(doneTimer);
-    $('done-overlay').hidden = true;
-    show('screen-mesa');
-  }
-
-  function showDone(mesa) {
-    const puedeImprimir = modoImpresion() !== 'no';
-    $('done-actions').hidden = !puedeImprimir;
-    $('done-print').disabled = false;
-    $('done-print').textContent = '🖨 Imprimir comanda';
-    $('done-print').onclick = async (e) => {
-      clearTimeout(doneTimer);
-      const ok = await printTicket(mesa, 'comanda', false, e.currentTarget);
-      if (ok) closeDone();
-      else doneTimer = setTimeout(closeDone, 6000);
-    };
-    $('done-overlay').hidden = false;
-    clearTimeout(doneTimer);
-    doneTimer = setTimeout(closeDone, puedeImprimir ? 6000 : 1500);
-  }
-  $('done-ok').addEventListener('click', closeDone);
 
   // ============ TOAST ============
   let toastTimer = null;

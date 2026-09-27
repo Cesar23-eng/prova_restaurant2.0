@@ -330,3 +330,45 @@ def test_restored_non_taco_items_lose_their_plate(manager, data_dir):
         json.dump(state, f)
     restored = OrderManager(root=data_dir, cutoff_hour=4)
     assert [i["plate"] for i in restored.get_items("Mesa 1")] == [2, 0]
+
+
+# ---------------------------------------------------------------------------
+#  Pedidos pagados (pestana Pagados)
+# ---------------------------------------------------------------------------
+def test_paid_orders_come_from_the_sales_ledger(manager, frozen_now):
+    import datetime
+
+    for i, (table, time) in enumerate((("Mesa 1", "13:05"), ("Juan", "13:40")), start=1):
+        frozen_now(datetime.datetime(2026, 9, 14, int(time[:2]), int(time[3:])))
+        manager.create_table(table)
+        manager.add_item(table, "Platillos", "Taco", "Pastor", 15, qty=i, plate=1)
+        manager.register_payment(table, "QR", qr_amount=15 * i)
+    manager.create_table("Mesa 3")
+
+    assert manager.open_tables() == ["Mesa 3"]
+    paid = manager.paid_orders()
+    assert [(s["number"], s["table"]) for s in paid] == [("#0002", "Juan"), ("#0001", "Mesa 1")]
+    sale = manager.find_paid_order("#0002")
+    assert sale["items"][0]["qty"] == 2 and sale["items"][0]["plate"] == 1 and sale["total"] == 30
+    assert manager.find_paid_order("#0099") is None
+    # Quitar los cobrados de la memoria no los borra de la pestana Pagados
+    manager.remove_paid_orders()
+    assert len(manager.paid_orders()) == 2
+
+
+def test_paid_name_is_released_for_new_or_renamed_orders(manager):
+    manager.create_table("Mesa 1")
+    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15)
+    manager.register_payment("Mesa 1", "QR", qr_amount=15)
+
+    ok, name = manager.create_table("MESA 1")
+    assert ok and name == "MESA 1" and manager.get_all_tables() == ["MESA 1"]
+
+    manager.add_item("MESA 1", "Platillos", "Taco", "Pastor", 15)
+    manager.register_payment("MESA 1", "QR", qr_amount=15)
+    manager.create_table("Juan")
+    assert manager.rename_table("Juan", "Mesa 1")
+    assert manager.open_tables() == ["Mesa 1"] and len(manager.paid_orders()) == 2
+
+    # Un pedido abierto sigue ocupando su nombre
+    assert manager.create_table("mesa 1") == (False, "mesa 1 2")

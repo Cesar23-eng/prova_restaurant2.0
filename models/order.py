@@ -272,6 +272,7 @@ class OrderManager:
             order_type = ORDER_TYPE_LOCAL
         with self._lock:
             self._purge_previous_days()
+            self._release_paid_name(base)
             if self.name_exists(base):
                 return False, self.suggest_name(base)
             number = self._next_order_number()
@@ -304,6 +305,24 @@ class OrderManager:
     def get_all_tables(self) -> List[str]:
         with self._lock:
             return list(self._orders.keys())
+
+    def open_tables(self) -> List[str]:
+        """Pedidos sin cobrar (los cobrados se ven en la pestaña Pagados)."""
+        with self._lock:
+            return [n for n, o in self._orders.items() if not o["paid"]]
+
+    def _release_paid_name(self, name: str):
+        """
+        Un pedido cobrado ya no ocupa su nombre: queda en el registro de ventas
+        (pestaña Pagados) y la mesa se puede volver a abrir.
+        """
+        existing = self.resolve_name(name)
+        if existing is None or not self._orders[existing]["paid"]:
+            return
+        del self._orders[existing]
+        if self.current_table == existing:
+            self.current_table = None
+        self._audit("LIMPIAR", existing, "pedido cobrado reemplazado por uno nuevo con el mismo nombre")
 
     def get_order(self, table_name: str) -> Optional[Dict]:
         with self._lock:
@@ -624,6 +643,8 @@ class OrderManager:
                 return False
             if old_name == new_clean:
                 return True
+            if self._norm(old_name) != self._norm(new_clean):
+                self._release_paid_name(new_clean)
             existing = self.resolve_name(new_clean)
             if existing is not None and existing != old_name:
                 return False
@@ -762,6 +783,15 @@ class OrderManager:
 
     def daily_excel_path(self, date: Optional[datetime.date] = None) -> str:
         return reports.excel_path(self.root, date or self.today())
+
+    def paid_orders(self, date: Optional[datetime.date] = None) -> List[Dict]:
+        """Pedidos cobrados de la jornada, el ultimo primero (del registro de ventas)."""
+        sales = reports.read_sales(self.root, date or self.today())
+        return sorted(sales, key=lambda s: (s.get("time", ""), reports.parse_order_number(s.get("number", ""))),
+                      reverse=True)
+
+    def find_paid_order(self, number: str, date: Optional[datetime.date] = None) -> Optional[Dict]:
+        return next((s for s in self.paid_orders(date) if s.get("number") == number), None)
 
     def day_summary(self, date: Optional[datetime.date] = None) -> Dict:
         return reports.summarize(reports.read_sales(self.root, date or self.today()))

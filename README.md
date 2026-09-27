@@ -73,7 +73,7 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 
 | Columna | Qué hace |
 | --- | --- |
-| **Pedidos** | Tarjetas con número, total, minutos de espera (ámbar desde 20 min, rojo desde 40), platillos sin comanda y si lo abrió un mesero |
+| **Pedidos** | Pestañas **Por cobrar** (número, total, minutos de espera: ámbar desde 20 min, rojo desde 40, platillos sin comanda y si lo abrió un mesero) y **Pagados** (solo lectura) |
 | **Menú** | Categorías, buscador sin tildes (`Ctrl+K`) y tarjetas de productos: **un toque en la variante agrega** al pedido |
 | **Ticket** | Tipo de consumo, plato activo, líneas con − / + y menú ⋯ (nota, mover de plato, quitar), comanda, cuenta y **Cobrar** |
 
@@ -85,6 +85,7 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 | Cobrar | **Cobrar** o `F9`. `F1` efectivo, `F2` QR, `F3` mixto; montos rápidos y cambio en grande |
 | Comanda de cocina | **🔔 Comanda** o `F8`: imprime directo solo lo nuevo. ⋯ → reimprimir completa |
 | Cuenta del cliente | **🧾 Cuenta** o `Ctrl+P` |
+| Ver pedidos pagados | Pestaña **Pagados**: buscar por mesa, cliente o número y tocar uno para verlo |
 | Apertura de caja | **💰 Abrir caja**: efectivo inicial, saldo del QR y fondo para imprevistos |
 | Gasto o imprevisto | **💰 Caja abierta → Registrar gasto** (hielo, gas…), sale del efectivo o del QR |
 | Bebida agotada | **🥤 Inventario** o clic derecho sobre la variante en el menú |
@@ -92,6 +93,18 @@ La pantalla se divide en tres columnas, como un POS de restaurante:
 
 Los avisos (agregado, cobrado, mesero envió algo) aparecen abajo sin interrumpir; solo
 se pide confirmación para acciones que no se pueden deshacer.
+
+### Pedidos pagados (solo lectura)
+
+Al cobrar, el pedido sale de **Por cobrar** y pasa a la pestaña **Pagados**, donde se
+ven todos los cobros de la jornada, el último primero, con el total del día arriba.
+Al tocar uno se ve completo en el ticket con **🔒 Solo lectura**: platos, notas, método
+de pago, efectivo recibido, cambio y moto. No tiene ningún botón para modificarlo y el
+menú no le agrega nada; solo se puede **🧾 Reimprimir cuenta** (queda en la auditoría).
+
+- Sale del registro de ventas del día, así que no se pierde al cerrar la app.
+- La mesa queda libre apenas se cobra: se puede abrir otra vez «Mesa 3» sin limpiar nada.
+- En los celulares las mesas cobradas ya no aparecen en la lista.
 
 ### Apertura y cierre de caja
 
@@ -173,8 +186,6 @@ Configuración en **⋯ → Impresora de tickets**:
   Windows en las demás.
 - **Papel:** 80 mm (48 columnas) o 58 mm (32 columnas).
 - **Letra de la comanda:** *Normal* (recomendada) o *Grande*, para leer de lejos en cocina.
-- **Meseros pueden imprimir:** *Sí: comandas y cuentas*, *Solo comandas* o *No, solo la
-  caja imprime* (`meseros_imprimen`).
 - **Imprimir prueba:** revisa tildes, tamaños y corte.
 
 Requisito: instalar el driver de Epson (*EPSON Advanced Printer Driver* para TM-T20III).
@@ -188,14 +199,9 @@ Requisito: instalar el driver de Epson (*EPSON Advanced Printer Driver* para TM-
    un toque, busca platillos, elige el plato, agrega notas para cocina, ve lo ya
    pedido y envía con el botón inferior. El pedido no se pierde si se recarga la
    página y no se duplica si el WiFi falla al enviar.
-4. **Imprimir desde el celular** (botón aparte: enviar no imprime solo). En el menú de
-   la mesa, **🧾 Pedido** muestra lo pedido y la sección **IMPRIMIR**:
-   - **🔔 Comanda · N nuevos:** imprime en la Epson de la caja solo lo que cocina no
-     tiene. *↻ Reimprimir comanda completa* vuelve a sacar todo.
-   - **🧾 Cuenta:** la cuenta del cliente.
-   - Al enviar un pedido, el aviso de «¡Enviado!» ofrece **🖨 Imprimir comanda**.
-   La caja muestra un aviso cada vez que un mesero imprime y lo anota en la auditoría.
-   Si la impresora falla, el celular lo dice y los platillos siguen como pendientes.
+4. En el menú de la mesa, **🧾 Pedido** muestra lo que ya pidió la mesa.
+
+Los meseros **no imprimen**: la comanda y la cuenta se imprimen solo desde la caja.
 
 La primera vez Windows puede preguntar por el Firewall: permite el acceso en
 **redes privadas**. El PIN se genera solo y se puede cambiar desde la caja.
@@ -212,7 +218,7 @@ Todo se guarda en la carpeta `data/` junto al programa:
 | `AAAA-MM-DD/audit_log_AAAA-MM-DD.txt` | Auditoria: quien agrego, quito, cobro o elimino |
 | `AAAA-MM-DD/caja_AAAA-MM-DD.json` | Apertura de caja, gastos e imprevistos y arqueo del día |
 | `inventario.json` | Productos marcados como agotados |
-| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, productos que llevan plato, permisos de impresión de meseros |
+| `config.json` | Nombre del local, PIN y puerto de meseros, hora de corte, tema visual, número de mesas, productos que llevan plato |
 | `errores.log` | Errores inesperados (la app no se cierra, avisa y registra) |
 
 - Si el Excel del dia esta abierto al cobrar, la venta igual queda registrada y la

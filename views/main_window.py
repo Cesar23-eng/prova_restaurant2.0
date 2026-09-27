@@ -1,12 +1,11 @@
 import datetime
 import html
 import os
-import threading
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QKeySequence, QPalette, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QApplication, QButtonGroup, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -25,8 +24,8 @@ from views.dialogs import (
     InventoryDialog, PaymentDialog, PlateDialog, PrinterDialog,
 )
 from views.widgets import (
-    PRODUCT_CARD_MIN_WIDTH, FlowLayout, OrderCard, ProductCard, TicketLine, Toast, clear_layout,
-    format_minutes, make_button, make_label, money, set_prop,
+    PRODUCT_CARD_MIN_WIDTH, FlowLayout, OrderCard, PaidOrderCard, ProductCard, ReadOnlyLine, TicketLine, Toast,
+    clear_layout, format_minutes, make_button, make_label, money, set_prop,
 )
 
 MENU_SPACING = 10
@@ -57,8 +56,6 @@ class ProvaRestaurant(QMainWindow):
 
     # Emitida desde cualquier hilo (p. ej. el servidor de meseros); Qt la entrega en el hilo de la UI
     orders_changed = pyqtSignal(str, str, dict)
-    # El servidor (otro hilo) pide imprimir; la impresion se hace en el hilo de la caja
-    waiter_print_requested = pyqtSignal(object)
 
     def __init__(self, order_manager: OrderManager = None, menu_data: MenuData = None,
                  config: dict = None):
@@ -83,6 +80,11 @@ class ProvaRestaurant(QMainWindow):
         self.order_cards = {}
         self.plate_buttons = {}
         self.ticket_lines = []
+        # Pestana de la columna izquierda ("open" = por cobrar, "paid" = pagados)
+        self.orders_tab = "open"
+        self.paid_cards = {}
+        # Venta cobrada que se esta consultando (solo lectura)
+        self.viewing_sale = None
 
         self.setWindowTitle("PRÖVA México · Caja")
         self.resize(1360, 820)
@@ -92,7 +94,6 @@ class ProvaRestaurant(QMainWindow):
         self.reload_menu()
 
         self.orders_changed.connect(self._on_orders_changed)
-        self.waiter_print_requested.connect(self._run_waiter_print)
         self.order_manager.add_listener(
             lambda event, table, info: self.orders_changed.emit(event, table or "", dict(info)))
         self.refresh_orders()
@@ -221,24 +222,68 @@ class ProvaRestaurant(QMainWindow):
         top.addWidget(self.pending_label)
         layout.addLayout(top)
 
+        tabs = QHBoxLayout()
+        tabs.setSpacing(6)
+        self.tab_group = QButtonGroup(self)
+        self.tab_buttons = {}
+        for key, text, tooltip in (("open", "Por cobrar", "Pedidos abiertos"),
+                                   ("paid", "Pagados", "Pedidos cobrados de la jornada (solo lectura)")):
+            button = make_button(text, "segment", tooltip=tooltip)
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, k=key: self.show_orders_tab(k))
+            self.tab_group.addButton(button)
+            tabs.addWidget(button, 1)
+            self.tab_buttons[key] = button
+        self.tab_buttons["open"].setChecked(True)
+        layout.addLayout(tabs)
+
+        # --- Por cobrar ---
+        self.open_view = QWidget()
+        open_layout = QVBoxLayout(self.open_view)
+        open_layout.setContentsMargins(0, 0, 0, 0)
+        open_layout.setSpacing(10)
         self.new_order_btn = make_button("＋  Nuevo pedido", "bigPrimary", self.add_pedido, "Ctrl+N")
-        layout.addWidget(self.new_order_btn)
+        open_layout.addWidget(self.new_order_btn)
 
         cards = QWidget()
         self.cards_layout = QVBoxLayout(cards)
         self.cards_layout.setContentsMargins(0, 2, 6, 2)
         self.cards_layout.setSpacing(8)
         self.cards_layout.addStretch()
-        layout.addWidget(_scroll_area(cards), 1)
+        open_layout.addWidget(_scroll_area(cards), 1)
 
         self.orders_empty = make_label(
-            "Todavía no hay pedidos.\nToca «Nuevo pedido» o espera a los meseros.", "emptyState", wrap=True)
+            "No hay pedidos por cobrar.\nToca «Nuevo pedido» o espera a los meseros.", "emptyState", wrap=True)
         self.orders_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.orders_empty)
+        open_layout.addWidget(self.orders_empty)
+        layout.addWidget(self.open_view, 1)
 
-        self.clear_paid_btn = make_button("Quitar cobrados de la lista", "ghostButton", self.clear_paid_orders,
-                                          "Siguen guardados en el Excel del día")
-        layout.addWidget(self.clear_paid_btn)
+        # --- Pagados: solo para consultar ---
+        self.paid_view = QWidget()
+        paid_layout = QVBoxLayout(self.paid_view)
+        paid_layout.setContentsMargins(0, 0, 0, 0)
+        paid_layout.setSpacing(10)
+        self.paid_summary = make_label("", "paidSummary", wrap=True)
+        paid_layout.addWidget(self.paid_summary)
+        self.paid_search = QLineEdit()
+        self.paid_search.setObjectName("searchInput")
+        self.paid_search.setPlaceholderText("\U0001F50D  Buscar mesa, cliente o número")
+        self.paid_search.setClearButtonEnabled(True)
+        self.paid_search.textChanged.connect(lambda _text: self.refresh_paid_orders())
+        paid_layout.addWidget(self.paid_search)
+
+        paid_cards = QWidget()
+        self.paid_cards_layout = QVBoxLayout(paid_cards)
+        self.paid_cards_layout.setContentsMargins(0, 2, 6, 2)
+        self.paid_cards_layout.setSpacing(8)
+        self.paid_cards_layout.addStretch()
+        paid_layout.addWidget(_scroll_area(paid_cards), 1)
+
+        self.paid_empty = make_label("", "emptyState", wrap=True)
+        self.paid_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        paid_layout.addWidget(self.paid_empty)
+        self.paid_view.hide()
+        layout.addWidget(self.paid_view, 1)
         return panel
 
     def _build_menu_panel(self) -> QFrame:
@@ -286,6 +331,12 @@ class ProvaRestaurant(QMainWindow):
         self.no_results.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.no_results.hide()
         layout.addWidget(self.no_results)
+
+        self.paid_menu_hint = make_label(
+            "Estás viendo un pedido pagado. Para agregar platillos elige un pedido en «Por cobrar» "
+            "o crea uno nuevo.", "paidMenuHint", wrap=True)
+        self.paid_menu_hint.hide()
+        layout.addWidget(self.paid_menu_hint)
         return panel
 
     def _build_ticket_panel(self) -> QFrame:
@@ -367,9 +418,6 @@ class ProvaRestaurant(QMainWindow):
         self.lines_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         body.addWidget(self.lines_empty)
 
-        self.paid_banner = make_label("", "paidBanner", wrap=True)
-        body.addWidget(self.paid_banner)
-
         total_row = QHBoxLayout()
         total_row.addWidget(make_label("TOTAL", "panelTitle"))
         total_row.addStretch()
@@ -400,11 +448,59 @@ class ProvaRestaurant(QMainWindow):
 
         self.pay_btn = make_button("Cobrar", "payButton", self.mark_as_paid, "F9")
         body.addWidget(self.pay_btn)
-        self.remove_paid_btn = make_button("Quitar de la lista", "ghostButton", self.delete_table)
-        body.addWidget(self.remove_paid_btn)
 
         layout.addWidget(self.ticket_body, 1)
+        layout.addWidget(self._build_paid_ticket(), 1)
         return panel
+
+    def _build_paid_ticket(self) -> QWidget:
+        """Pedido cobrado: se ve completo pero no tiene ningun control para modificarlo."""
+        self.ticket_paid = QWidget()
+        body = QVBoxLayout(self.ticket_paid)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.paid_number = make_label("", "ticketNumber")
+        head.addWidget(self.paid_number)
+        self.paid_name = make_label("", "ticketTitle")
+        self.paid_name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        head.addWidget(self.paid_name, 1)
+        head.addWidget(make_label("\U0001F512  Solo lectura", "readOnlyChip"))
+        body.addLayout(head)
+        self.paid_meta = make_label("", "muted", wrap=True)
+        body.addWidget(self.paid_meta)
+        self.paid_status = make_label("", "paidBanner", wrap=True)
+        body.addWidget(self.paid_status)
+
+        lines = QWidget()
+        self.paid_lines_layout = QVBoxLayout(lines)
+        self.paid_lines_layout.setContentsMargins(0, 0, 6, 0)
+        self.paid_lines_layout.setSpacing(4)
+        self.paid_lines_layout.addStretch()
+        body.addWidget(_scroll_area(lines), 1)
+
+        self.paid_details = QFrame()
+        self.paid_details.setObjectName("detailsBox")
+        self.paid_details_layout = QGridLayout(self.paid_details)
+        self.paid_details_layout.setContentsMargins(14, 10, 14, 10)
+        self.paid_details_layout.setHorizontalSpacing(12)
+        self.paid_details_layout.setVerticalSpacing(4)
+        body.addWidget(self.paid_details)
+
+        total_row = QHBoxLayout()
+        total_row.addWidget(make_label("TOTAL", "panelTitle"))
+        total_row.addStretch()
+        self.paid_total = make_label(money(0), "totalAmount")
+        total_row.addWidget(self.paid_total)
+        body.addLayout(total_row)
+
+        self.reprint_bill_btn = make_button("\U0001F9FE  Reimprimir cuenta", "secondaryButton",
+                                            self.reprint_paid_bill, "Ctrl+P · Copia de la cuenta para el cliente")
+        body.addWidget(self.reprint_bill_btn)
+        self.ticket_paid.hide()
+        return self.ticket_paid
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self.add_pedido)
@@ -472,7 +568,7 @@ class ProvaRestaurant(QMainWindow):
             from server import WaiterServer, create_app, get_local_ip
 
             app = create_app(self.order_manager, self.menu_data, lambda: self.waiter_pin,
-                             int(self.config.get("numero_mesas", 13)), printer=self)
+                             int(self.config.get("numero_mesas", 13)))
             self.waiter_server = WaiterServer(app)
             port = self.waiter_server.start(int(self.config.get("puerto_meseros", 5000)))
             self.waiter_url = f"http://{get_local_ip()}:{port}"
@@ -646,6 +742,10 @@ class ProvaRestaurant(QMainWindow):
     def add_product(self, category: str, dish: str, variant: str, button=None) -> bool:
         """Un toque en el menu: agrega al pedido actual (o pide crear uno)."""
         table = self.current_table
+        if not table and self.viewing_sale is not None:
+            self.toast.show_message("Estás viendo un pedido pagado: no se puede modificar. "
+                                    "Elige un pedido en «Por cobrar» o crea uno nuevo.", "warning", 4000)
+            return False
         if not table:
             if not self.add_pedido():
                 return False
@@ -702,31 +802,77 @@ class ProvaRestaurant(QMainWindow):
     def refresh_orders(self):
         clear_layout(self.cards_layout)
         self.order_cards = {}
-        names = self.order_manager.get_all_tables()
-        orders = [(name, self.order_manager.get_order(name)) for name in names]
+        orders = [(name, self.order_manager.get_order(name)) for name in self.order_manager.open_tables()]
         orders = [(name, order) for name, order in orders if order]
-        orders.sort(key=lambda item: item[1]["paid"])  # primero lo que falta cobrar
-        pending = paid = 0
+        pending = 0
         for name, order in orders:
             card = OrderCard(name, order, _minutes_since(order.get("created_at")),
                              name == self.current_table)
             card.selected_name.connect(self.select_order)
             self.cards_layout.addWidget(card)
             self.order_cards[name] = card
-            if order["paid"]:
-                paid += 1
-            elif order["items"]:
+            if order["items"]:
                 pending += 1
         self.cards_layout.addStretch()
         self.orders_empty.setVisible(not orders)
         self.pending_label.setText(f"{pending} por cobrar" if pending else "")
-        self.clear_paid_btn.setVisible(paid > 0)
-        self.clear_paid_btn.setText(f"Quitar cobrados de la lista ({paid})")
-        if self.current_table and self.current_table not in names:
+        self.tab_buttons["open"].setText(f"Por cobrar ({len(orders)})" if orders else "Por cobrar")
+        if self.current_table and self.current_table not in self.order_manager.get_all_tables():
             self.order_manager.set_current_table(None)
+        self.refresh_paid_orders()
+
+    def show_orders_tab(self, tab: str):
+        self.orders_tab = tab
+        self.tab_buttons[tab].setChecked(True)
+        self.open_view.setVisible(tab == "open")
+        self.paid_view.setVisible(tab == "paid")
+        self.refresh_paid_orders()
+
+    def refresh_paid_orders(self):
+        """Pestana Pagados: sale del registro de ventas del dia, asi no se pierde nada."""
+        sales = self.order_manager.paid_orders()
+        total = sum(float(sale.get("total") or 0) for sale in sales)
+        self.tab_buttons["paid"].setText(f"Pagados ({len(sales)})" if sales else "Pagados")
+        self.paid_summary.setText(f"{len(sales)} pagado{'s' if len(sales) != 1 else ''} en la jornada"
+                                  f"   ·   {money(total)}")
+        self.paid_summary.setVisible(bool(sales))
+        if self.orders_tab != "paid":
+            return
+        clear_layout(self.paid_cards_layout)
+        self.paid_cards = {}
+        tokens = normalize_text(self.paid_search.text()).split()
+        selected = self.viewing_sale.get("number") if self.viewing_sale and not self.current_table else None
+        for sale in sales:
+            haystack = normalize_text(f"{sale.get('number', '')} {sale.get('table', '')} "
+                                      f"{sale.get('order_type', '')} {sale.get('method', '')}")
+            if tokens and not all(t in haystack for t in tokens):
+                continue
+            card = PaidOrderCard(sale, sale.get("number") == selected)
+            card.selected_number.connect(self.view_paid_order)
+            self.paid_cards_layout.addWidget(card)
+            self.paid_cards[sale.get("number")] = card
+        self.paid_cards_layout.addStretch()
+        if not sales:
+            self.paid_empty.setText("Todavía no hay pedidos pagados en esta jornada.")
+        else:
+            self.paid_empty.setText("Sin resultados para esa búsqueda.")
+        self.paid_empty.setVisible(not self.paid_cards)
+
+    def view_paid_order(self, number: str):
+        sale = self.order_manager.find_paid_order(number)
+        if sale is None:
+            self.toast.show_message("No se encontró ese pedido pagado.", "error")
+            return
+        self.viewing_sale = sale
+        self.order_manager.set_current_table(None)
+        self.refresh_orders()
+        self.refresh_ticket()
 
     def select_order(self, name: str):
+        self.viewing_sale = None
         self.order_manager.set_current_table(name)
+        if self.orders_tab != "open":
+            self.show_orders_tab("open")
         self.refresh_orders()
         self.refresh_ticket()
 
@@ -751,8 +897,20 @@ class ProvaRestaurant(QMainWindow):
     def refresh_ticket(self):
         table = self.current_table
         order = self.order_manager.get_order(table) if table else None
-        self.ticket_empty.setVisible(order is None)
+        if order is not None and order["paid"]:
+            # Recien cobrado: pasa a verse como pagado, sin controles para modificarlo
+            self.viewing_sale = (self.order_manager.find_paid_order(order["number"])
+                                 or self._sale_from_order(table, order))
+            self.order_manager.set_current_table(None)
+            order = None
+            self.refresh_paid_orders()
+        sale = self.viewing_sale if order is None else None
+        self.ticket_empty.setVisible(order is None and sale is None)
         self.ticket_body.setVisible(order is not None)
+        self.ticket_paid.setVisible(sale is not None)
+        self.paid_menu_hint.setVisible(sale is not None)
+        if sale is not None:
+            self._render_paid_ticket(sale)
         if order is None:
             self.ticket_lines = []
             self._plate_table = None
@@ -799,15 +957,93 @@ class ProvaRestaurant(QMainWindow):
         self.pay_btn.setVisible(not paid)
         self.pay_btn.setEnabled(bool(lines))
         self.pay_btn.setText(f"\U0001F4B5  Cobrar   {money(total)}")
-        self.remove_paid_btn.setVisible(paid)
 
-        if paid:
-            payment = order["payment"]
-            text = f"✔  COBRADO  ·  {payment['method']}  ·  {money(payment['total'])}"
-            if payment.get("change"):
-                text += f"\nCambio {money(payment['change'])} en {payment['change_method']}"
-            self.paid_banner.setText(text)
-        self.paid_banner.setVisible(paid)
+    # ----------------------------------------------------------------
+    #  Pedido pagado (solo lectura)
+    # ----------------------------------------------------------------
+    def _sale_from_order(self, table: str, order: dict) -> dict:
+        """Por si la venta no se pudo leer del registro: se arma con el pedido cobrado."""
+        delivery = order.get("delivery") or {}
+        return {
+            "number": order["number"], "table": table, "order_type": order["order_type"],
+            "time": (order.get("paid_at") or "")[11:19],
+            "items": self.order_manager.get_order_lines(table),
+            **(order.get("payment") or {}),
+            "moto_cost": delivery.get("moto_cost"), "moto_payment_method": delivery.get("moto_payment_method", ""),
+        }
+
+    @staticmethod
+    def _sale_lines(sale: dict) -> list:
+        lines = []
+        for item in sale.get("items", []):
+            line = dict(item)
+            line["qty"] = int(line.get("qty") or 1)
+            line["subtotal"] = float(line.get("subtotal") or 0)
+            line.setdefault("unit_price", round(line["subtotal"] / line["qty"], 2))
+            line.setdefault("plate", 0)
+            line.setdefault("note", "")
+            lines.append(line)
+        return lines
+
+    def _render_paid_ticket(self, sale: dict):
+        time = (sale.get("time") or "")[:5]
+        method = sale.get("method", "")
+        self.paid_number.setText(sale.get("number", ""))
+        self.paid_name.setText(sale.get("table", ""))
+        self.paid_meta.setText("  ·  ".join(p for p in (sale.get("order_type", ""), f"Pagado {time}", method) if p))
+        self.paid_status.setText(f"✔  PAGADO a las {time}\nNo se puede modificar, solo consultar.")
+
+        clear_layout(self.paid_lines_layout)
+        lines = self._sale_lines(sale)
+        with_plates = any(line["plate"] for line in lines)
+        for plate, plate_lines in group_lines_by_plate(lines):
+            if with_plates:
+                subtotal = sum(line["subtotal"] for line in plate_lines)
+                title = f"\U0001F37D  {plate_label(plate).upper()}" if plate else "OTROS  ·  SIN PLATO"
+                self.paid_lines_layout.addWidget(make_label(f"{title}   ·   {money(subtotal)}", "plateHeader"))
+            for line in plate_lines:
+                self.paid_lines_layout.addWidget(ReadOnlyLine(line))
+        self.paid_lines_layout.addStretch()
+
+        rows = [("Método de pago", method)]
+        amount = float(sale.get("amount_paid") or 0)
+        if method == "Mixto":
+            rows += [("Efectivo", money(float(sale.get("cash_amount") or 0))),
+                     ("QR", money(float(sale.get("qr_amount") or 0)))]
+        elif method == "QR":
+            rows.append(("Pagó por QR", money(amount)))
+        elif amount:
+            rows.append(("Efectivo recibido", money(amount)))
+        if float(sale.get("change") or 0):
+            rows.append((f"Cambio ({sale.get('change_method') or 'Efectivo'})", money(float(sale['change']))))
+        if sale.get("moto_cost"):
+            rows.append((f"Moto ({sale.get('moto_payment_method') or '-'})", money(float(sale['moto_cost']))))
+        clear_layout(self.paid_details_layout)
+        for row, (label, value) in enumerate(rows):
+            self.paid_details_layout.addWidget(make_label(label, "muted"), row, 0)
+            value_label = make_label(value, "detailValue")
+            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.paid_details_layout.addWidget(value_label, row, 1)
+        total = sale.get("total")
+        self.paid_total.setText(money(float(total if total is not None else sum(l["subtotal"] for l in lines))))
+
+    def reprint_paid_bill(self):
+        sale = self.viewing_sale
+        if sale is None:
+            return
+        lines = self._sale_lines(sale)
+        if not lines:
+            self.toast.show_message("El pedido está vacío.", "warning")
+            return
+        order = {
+            "number": sale.get("number", ""), "order_type": sale.get("order_type", ORDER_TYPE_LOCAL),
+            "payment": {k: sale.get(k) for k in ("method", "amount_paid", "change", "change_method")},
+            "delivery": {"moto_cost": sale.get("moto_cost"), "moto_payment_method": sale.get("moto_payment_method", "")}
+            if sale.get("moto_cost") else None,
+        }
+        table = sale.get("table", "")
+        if self.send_ticket(self._bill_ticket(order, table, lines), "Cuenta"):
+            self.order_manager.record("REIMPRIME", table, f"cuenta del pedido pagado {order['number']}")
 
     # ----------------------------------------------------------------
     #  Platos
@@ -977,7 +1213,7 @@ class ProvaRestaurant(QMainWindow):
         return table
 
     def add_pedido(self) -> bool:
-        dialog = AddOrderDialog(self, occupied=self.order_manager.get_all_tables(),
+        dialog = AddOrderDialog(self, occupied=self.order_manager.open_tables(),
                                 table_count=int(self.config.get("numero_mesas", 13)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
@@ -1026,12 +1262,6 @@ class ProvaRestaurant(QMainWindow):
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.order_manager.delete_table(table)
-
-    def clear_paid_orders(self):
-        removed = self.order_manager.remove_paid_orders()
-        if removed:
-            self.toast.show_message(f"{removed} pedido(s) cobrados quitados de la lista. "
-                                    f"Siguen en el Excel del día.", "info")
 
     def set_order_type(self, order_type: str):
         table = self.current_table
@@ -1152,6 +1382,9 @@ class ProvaRestaurant(QMainWindow):
                                      self.ticket_printer.columns)
 
     def print_customer_bill(self):
+        if not self.current_table and self.viewing_sale is not None:
+            self.reprint_paid_bill()
+            return
         table = self._require_table("No hay nada para imprimir")
         if not table:
             return
@@ -1166,61 +1399,6 @@ class ProvaRestaurant(QMainWindow):
         ticket = tickets.day_summary_ticket(self.local_name, summary, date_label, self.ticket_printer.columns,
                                             cash=cash)
         return self.send_ticket(ticket, "Cierre de caja")
-
-    # ----------------------------------------------------------------
-    #  Impresion pedida desde el celular del mesero
-    # ----------------------------------------------------------------
-    def waiter_print_mode(self) -> str:
-        mode = self.config.get("meseros_imprimen", "comanda_y_cuenta")
-        return mode if mode in ("comanda_y_cuenta", "solo_comanda", "no") else "comanda_y_cuenta"
-
-    def print_for_waiter(self, kind: str, table: str, full: bool = False, timeout: float = 20):
-        """
-        Lo llama el servidor de meseros desde su hilo. La impresion se hace en el
-        hilo de la caja (Qt) y aca se espera el resultado para contestarle al celular.
-        """
-        job = {"kind": kind, "table": table, "full": full, "done": threading.Event(), "result": None}
-        self.waiter_print_requested.emit(job)
-        if not job["done"].wait(timeout):
-            return {"ok": False, "error": "La caja no respondió. Intenta de nuevo."}, 504
-        return job["result"]
-
-    def _run_waiter_print(self, job: dict):
-        try:
-            job["result"] = self._waiter_print(job["kind"], job["table"], job["full"])
-        except Exception as e:
-            job["result"] = ({"ok": False, "error": f"Error al imprimir: {e}"}, 500)
-        finally:
-            job["done"].set()
-
-    def _waiter_print(self, kind: str, table: str, full: bool):
-        order = self.order_manager.get_order(table)
-        if order is None:
-            return {"ok": False, "error": "La mesa ya no existe"}, 404
-        if kind == "comanda":
-            lines = self.order_manager.get_order_lines(table, kitchen_pending_only=not full)
-            if not lines:
-                if not order["items"]:
-                    return {"ok": False, "error": "El pedido está vacío."}, 409
-                return {"ok": False, "sin_nuevos": True,
-                        "error": "No hay platillos nuevos: la comanda ya se imprimió."}, 409
-            ticket, title = self._kitchen_ticket(order, table, lines, full), "Comanda"
-        else:
-            lines = self.order_manager.get_order_lines(table)
-            if not lines:
-                return {"ok": False, "error": "El pedido está vacío."}, 409
-            ticket, title = self._bill_ticket(order, table, lines), "Cuenta"
-        try:
-            printer_name = self.ticket_printer.print_ticket(ticket, f"PROVA {title} (mesero)")
-        except PrinterError as e:
-            self.toast.show_message(f"\U0001F4F1 Un mesero no pudo imprimir la {title.lower()}: {e}", "error", 6000)
-            return {"ok": False, "error": f"No se pudo imprimir: revisa que la impresora tenga papel y esté "
-                                          f"encendida, o avisa a la caja."}, 502
-        if kind == "comanda":
-            self.order_manager.mark_sent_to_kitchen(table)
-        self.order_manager.record("IMPRIME", table, f"{title.lower()}{' completa' if full else ''} origen=mesero")
-        self.toast.show_message(f"\U0001F4F1 Mesero imprimió la {title.lower()} de «{table}»", "info", 4000)
-        return {"ok": True, "mensaje": f"{title} de {table} enviada a {printer_name}"}, 200
 
     # ----------------------------------------------------------------
     #  Caja: apertura, gastos e imprevistos

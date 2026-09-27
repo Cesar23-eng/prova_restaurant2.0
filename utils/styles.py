@@ -507,6 +507,37 @@ class ThemeManager:
         #badge[kind="warn"] {{ background-color: {t['warning_soft']}; color: {t['warning']}; }}
         #badge[kind="late"] {{ background-color: {t['danger_soft']}; color: {t['danger']}; }}
         #badge[kind="waiter"] {{ background-color: {t['surface3']}; color: {t['text']}; }}
+        #badge[kind="qr"] {{ background-color: {t['qr']}; color: #FFFFFF; }}
+        #badge[kind="mixed"] {{ background-color: {t['wood_soft']}; color: {t['wood_text']}; }}
+
+        /* ---------- Pestana Pagados (solo lectura) ---------- */
+        #paidSummary {{
+            background-color: {t['success_soft']};
+            border: 1px solid {t['success']};
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-weight: 600;
+        }}
+        #readOnlyChip {{
+            background-color: {t['surface3']};
+            border: 1px solid {t['border_strong']};
+            border-radius: 11px;
+            padding: 3px 10px;
+            font-size: 9pt;
+            font-weight: 700;
+        }}
+        #detailsBox {{
+            background-color: {t['surface2']};
+            border: 1px solid {t['border']};
+            border-radius: 12px;
+        }}
+        #detailValue {{ font-weight: 600; }}
+        #paidMenuHint {{
+            background-color: {t['surface3']};
+            color: {t['muted']};
+            border-radius: 10px;
+            padding: 8px 12px;
+        }}
 
         /* ---------- Ticket ---------- */
         #ticketNumber {{

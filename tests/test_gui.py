@@ -215,29 +215,114 @@ def test_waiter_add_from_other_thread_refreshes_ui(window, manager, qapp):
     assert "Mesero" in window.toast.last_message
 
 
-def test_paid_order_is_locked_in_ui(window, manager):
+def pay(manager, table="Mesa 1", dish=("Platillos", "Taco", "Carne", 15), qty=1, **payment):
+    manager.create_table(table)
+    manager.add_item(table, *dish, qty=qty)
+    total = dish[3] * qty
+    return manager.register_payment(table, payment.pop("method", "QR"), **(payment or {"qr_amount": total}))
+
+
+def test_paid_order_leaves_open_list_and_shows_read_only(window, manager):
     manager.create_table("Mesa 1")
     window.select_order("Mesa 1")
-    window.add_product("Platillos", "Taco", "Carne")
-    manager.register_payment("Mesa 1", "QR", qr_amount=15)
+    window.add_product("Platillos", "Taco", "Pastor")
+    window.add_product("Platillos", "Taco", "Pastor")
+    manager.register_payment("Mesa 1", "Efectivo", cash_amount=50, change_method="Efectivo")
+
+    # Sale de «Por cobrar» y el ticket queda en solo lectura, sin controles
+    assert "Mesa 1" not in window.order_cards and window.current_table is None
+    assert window.ticket_body.isHidden() and not window.ticket_paid.isHidden()
+    assert window.paid_name.text() == "Mesa 1" and "PAGADO" in window.paid_status.text()
+    assert window.paid_total.text() == "Bs 30.00"
+    lines = [w for w in window.ticket_paid.findChildren(QLabel) if w.objectName() == "lineName"]
+    assert [w.text() for w in lines] == ["Taco"]
+    details = [w.text() for w in window.paid_details.findChildren(QLabel)]
+    assert "Efectivo recibido" in details and "Cambio (Efectivo)" in details and "Bs 20.00" in details
+    assert not window.paid_menu_hint.isHidden()
+
+    # Tocar el menu no modifica el pedido pagado
     assert window.add_product("Platillos", "Taco", "Carne") is False
-    assert window.toast.last_kind == "error"
-    assert len(manager.get_items("Mesa 1")) == 1
-    assert window.pay_btn.isHidden() and not window.remove_paid_btn.isHidden()
-    assert window.ticket_lines[0].plus_btn.isHidden()
-    assert "COBRADO" in window.paid_banner.text()
-    assert not window.type_buttons["En el local"].isEnabled()
+    assert "pagado" in window.toast.last_message
+    assert len(manager.get_items("Mesa 1")) == 2
 
 
-def test_clear_paid_orders(window, manager):
-    manager.create_table("Mesa 1")
-    manager.add_item("Mesa 1", "Platillos", "Taco", "Carne", 15)
-    manager.register_payment("Mesa 1", "QR", qr_amount=15)
-    manager.create_table("Mesa 2")
-    assert not window.clear_paid_btn.isHidden()
-    window.clear_paid_btn.click()
-    assert list(window.order_cards) == ["Mesa 2"]
-    assert window.clear_paid_btn.isHidden()
+def test_paid_tab_lists_sales_and_filters(window, manager):
+    pay(manager, "Mesa 1")
+    pay(manager, "Juan", ("Bebidas", "Coca cola", "Botella", 10), qty=2, method="Efectivo", cash_amount=20)
+    manager.create_table("Mesa 3")
+    assert window.tab_buttons["open"].text() == "Por cobrar (1)"
+    assert window.tab_buttons["paid"].text() == "Pagados (2)"
+
+    window.tab_buttons["paid"].click()
+    assert window.open_view.isHidden() and not window.paid_view.isHidden()
+    assert list(window.paid_cards) == ["#0002", "#0001"]  # el ultimo cobro primero
+    assert "2 pagados en la jornada" in window.paid_summary.text() and "Bs 35.00" in window.paid_summary.text()
+    window.paid_search.setText("juan")
+    assert list(window.paid_cards) == ["#0002"]
+    window.paid_search.setText("zzz")
+    assert window.paid_cards == {} and not window.paid_empty.isHidden()
+    window.paid_search.clear()
+
+    window.paid_cards["#0001"].clicked.emit()
+    assert window.paid_number.text() == "#0001" and window.paid_name.text() == "Mesa 1"
+    assert window.paid_cards["#0001"].property("selected") is True
+    # Elegir un pedido por cobrar vuelve a la otra pestana y deja de mostrar el pagado
+    window.select_order("Mesa 3")
+    assert not window.open_view.isHidden() and window.ticket_paid.isHidden()
+
+
+def test_paid_tab_survives_restart_and_cleared_list(window, manager, data_dir):
+    from models.order import OrderManager
+    from views.main_window import ProvaRestaurant
+
+    pay(manager, "Mesa 1")
+    manager.remove_paid_orders()
+    restarted = ProvaRestaurant(OrderManager(root=data_dir, cutoff_hour=4), window.menu_data, window.config)
+    try:
+        restarted.show_orders_tab("paid")
+        assert list(restarted.paid_cards) == ["#0001"]
+    finally:
+        restarted.menu_timer.stop()
+        restarted.clock_timer.stop()
+        restarted.close()
+
+
+def test_paid_table_name_is_free_for_a_new_order(window, manager, monkeypatch):
+    pay(manager, "Mesa 1")
+    captured = {}
+
+    class FakeAddOrderDialog:
+        def __init__(self, *args, occupied=None, **kwargs):
+            captured["occupied"] = occupied
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_order_name(self):
+            return "Mesa 1"
+
+        def get_order_type(self):
+            return "En el local"
+
+    monkeypatch.setattr("views.main_window.AddOrderDialog", FakeAddOrderDialog)
+    assert window.add_pedido()
+    assert captured["occupied"] == []
+    assert window.current_table == "Mesa 1" and not manager.is_paid("Mesa 1")
+    assert manager.get_order_number("Mesa 1") == "#0002"
+
+
+def test_reprint_bill_of_paid_order(window, manager, monkeypatch):
+    from utils import tickets
+
+    printed = []
+    monkeypatch.setattr(window, "send_ticket", lambda ticket, title: printed.append(tickets.to_text(ticket)) or True)
+    pay(manager, "Mesa 1", qty=2, method="Efectivo", cash_amount=50, change_method="Efectivo")
+    window.view_paid_order("#0001")
+    window.reprint_bill_btn.click()
+    assert "2 x Taco (Carne)" in printed[0] and "Cambio" in printed[0]
+    window.print_customer_bill()  # Ctrl+P con el pagado a la vista
+    assert len(printed) == 2
+    assert manager.get_items("Mesa 1")  # imprimir no cambia nada del pedido
 
 
 def test_add_order_dialog_quick_tables(qapp, messages):
@@ -553,74 +638,6 @@ def test_inventory_dialog_toggles(window, manager):
     dialog.mark_all_available()
     assert manager.inventory.is_available(*key) and dialog.status_label.text() == "Todo disponible"
     dialog.close()
-
-
-# ---------------------------------------------------------------------------
-#  Impresion pedida por el mesero
-# ---------------------------------------------------------------------------
-def test_waiter_prints_kitchen_ticket_and_bill(window, manager, monkeypatch):
-    from utils import tickets
-
-    sent = []
-    monkeypatch.setattr(window.ticket_printer, "print_ticket",
-                        lambda ticket, job: sent.append((job, tickets.to_text(ticket))) or "EPSON TM-T20III Receipt")
-    manager.create_table("Mesa 1")
-    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
-
-    payload, status = window.print_for_waiter("comanda", "Mesa 1")
-    assert status == 200 and payload["ok"] and "mesero" in sent[-1][0]
-    assert manager.kitchen_pending_count("Mesa 1") == 0
-    assert "Mesero imprimió la comanda" in window.toast.last_message
-
-    payload, status = window.print_for_waiter("comanda", "Mesa 1")
-    assert status == 409 and payload["sin_nuevos"] and len(sent) == 1
-
-    payload, status = window.print_for_waiter("comanda", "Mesa 1", full=True)
-    assert status == 200 and len(sent) == 2 and "Pastor" in sent[-1][1]
-
-    payload, status = window.print_for_waiter("cuenta", "Mesa 1")
-    assert status == 200 and "Cuenta" in payload["mensaje"] and "30" in sent[-1][1]
-    assert window.print_for_waiter("cuenta", "Mesa 9")[1] == 404
-
-
-def test_waiter_print_error_keeps_items_pending(window, manager, monkeypatch):
-    from utils.printer import PrinterError
-
-    def fail(ticket, job):
-        raise PrinterError("Impresora sin papel")
-
-    monkeypatch.setattr(window.ticket_printer, "print_ticket", fail)
-    manager.create_table("Mesa 1")
-    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15, qty=2)
-    payload, status = window.print_for_waiter("comanda", "Mesa 1")
-    assert status == 502 and not payload["ok"]
-    assert manager.kitchen_pending_count("Mesa 1") == 2
-    assert window.toast.last_kind == "error"
-
-
-def test_waiter_print_from_server_thread_runs_on_caja_thread(window, manager, monkeypatch, qapp):
-    """El servidor pide imprimir desde su hilo; la impresion corre en el hilo de Qt."""
-    printed_in = []
-    monkeypatch.setattr(window.ticket_printer, "print_ticket",
-                        lambda ticket, job: printed_in.append(threading.current_thread()) or "EPSON")
-    manager.create_table("Mesa 1")
-    manager.add_item("Mesa 1", "Platillos", "Taco", "Pastor", 15)
-    result = {}
-    worker = threading.Thread(target=lambda: result.update(r=window.print_for_waiter("comanda", "Mesa 1")))
-    worker.start()
-    while worker.is_alive():
-        qapp.processEvents()
-        worker.join(0.01)
-    assert result["r"][1] == 200
-    assert printed_in == [threading.main_thread()]
-
-
-def test_waiter_print_mode_from_config(window):
-    assert window.waiter_print_mode() == "comanda_y_cuenta"
-    window.config["meseros_imprimen"] = "solo_comanda"
-    assert window.waiter_print_mode() == "solo_comanda"
-    window.config["meseros_imprimen"] = "cualquier cosa"
-    assert window.waiter_print_mode() == "comanda_y_cuenta"
 
 
 def test_new_business_day_asks_to_open_cash_again(window, manager, frozen_now):

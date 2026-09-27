@@ -1183,9 +1183,6 @@ class PrinterDialog(QDialog):
     PAPERS = ((80, "80 mm · 48 columnas"), (58, "58 mm · 32 columnas"))
     FONT_SIZES = (("normal", "Normal (recomendada): platillos de 3 mm, platos en alto doble"),
                   ("grande", "Grande: platillos en alto doble, para leer de lejos"))
-    WAITER_MODES = (("comanda_y_cuenta", "Sí: comandas y cuentas"),
-                    ("solo_comanda", "Solo comandas"),
-                    ("no", "No, solo la caja imprime"))
 
     def __init__(self, config: dict, root: str, local_name: str, parent=None, printers=None, default=None):
         super().__init__(parent)
@@ -1239,14 +1236,6 @@ class PrinterDialog(QDialog):
         self.font_combo.setCurrentIndex(max(0, self.font_combo.findData(self.config.get("letra_comanda", "normal"))))
         layout.addWidget(self.font_combo)
 
-        layout.addWidget(make_label("Los meseros pueden imprimir desde el celular", "muted"))
-        self.waiter_combo = QComboBox()
-        for value, text in self.WAITER_MODES:
-            self.waiter_combo.addItem(text, value)
-        self.waiter_combo.setCurrentIndex(
-            max(0, self.waiter_combo.findData(self.config.get("meseros_imprimen", "comanda_y_cuenta"))))
-        layout.addWidget(self.waiter_combo)
-
         self.result_label = make_label("", "hint", wrap=True)
         layout.addWidget(self.result_label)
 
@@ -1268,7 +1257,6 @@ class PrinterDialog(QDialog):
             "modo_impresion": self.mode_combo.currentData(),
             "ancho_papel_mm": int(self.paper_combo.currentData()),
             "letra_comanda": self.font_combo.currentData(),
-            "meseros_imprimen": self.waiter_combo.currentData(),
         }
 
     def _printer_for_selection(self) -> TicketPrinter:

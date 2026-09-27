@@ -197,6 +197,76 @@ class OrderCard(ClickableFrame):
         self.setToolTip(f"{order['number']} - {name}\n{order['order_type']}")
 
 
+# Color del metodo de pago en las tarjetas de la pestana Pagados
+PAYMENT_BADGE_KIND = {"Efectivo": "paid", "QR": "qr", "Mixto": "mixed"}
+
+
+class PaidOrderCard(ClickableFrame):
+    """Pedido cobrado en la pestaña Pagados: solo se consulta, no se modifica."""
+
+    selected_number = pyqtSignal(str)
+
+    def __init__(self, sale: dict, selected: bool, parent=None):
+        super().__init__(parent)
+        self.number = sale.get("number", "")
+        self.setObjectName("orderCard")
+        self.setProperty("selected", selected)
+        self.setProperty("paid", True)
+        self.clicked.connect(lambda: self.selected_number.emit(self.number))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(make_label(self.number, "cardNumber"))
+        title = make_label(sale.get("table", ""), "cardTitle")
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        top.addWidget(title, 1)
+        method = sale.get("method", "")
+        top.addWidget(badge(method, PAYMENT_BADGE_KIND.get(method, "")))
+        layout.addLayout(top)
+
+        units = sum(int(line.get("qty") or 0) for line in sale.get("items", []))
+        # Espacios no separables: si baja de linea, lo hace entre partes y no en medio de la hora
+        parts = [f"Pagado {(sale.get('time') or '')[:5]}", f"{units} {'ítem' if units == 1 else 'ítems'}"]
+        if sale.get("order_type") == "Para llevar":
+            parts.insert(0, "\U0001F6F5 Para llevar")
+        bottom = QHBoxLayout()
+        # Baja de linea si no entra (para llevar), asi la hora nunca se corta
+        meta = make_label("  ·  ".join(parts), "cardMeta", wrap=True)
+        bottom.addWidget(meta, 1)
+        bottom.addWidget(make_label(money(float(sale.get("total") or 0)), "cardTotal"))
+        layout.addLayout(bottom)
+        self.setToolTip(f"{self.number} - {sale.get('table', '')}\nPagado: solo lectura")
+
+
+class ReadOnlyLine(QFrame):
+    """Linea de un pedido pagado: sin botones, solo para consultar."""
+
+    def __init__(self, line: dict, parent=None):
+        super().__init__(parent)
+        self.line = line
+        self.setObjectName("ticketLine")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 8, 2, 8)
+        layout.setSpacing(10)
+        qty = make_label(f"{line['qty']}×", "qtyLabel")
+        qty.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(qty)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        text.addWidget(make_label(line["dish"], "lineName", wrap=True))
+        text.addWidget(make_label(line["variant"], "lineSub", wrap=True))
+        if line.get("note"):
+            text.addWidget(make_label(f"\U0001F4DD {line['note']}", "lineNote", wrap=True))
+        layout.addLayout(text, 1)
+        price = make_label(money(float(line["subtotal"])), "linePrice")
+        price.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(price)
+
+
 def plate_label_short(plate: int) -> str:
     return f"Plato {plate}" if plate else "Sin plato"
 
